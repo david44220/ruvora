@@ -11,14 +11,14 @@ Ruvora is packaged as a portable Node.js application with PostgreSQL. This runbo
 | Database            | PostgreSQL 18, UTF-8, protected network connectivity              |
 | App port            | 3000 by default; container binds 0.0.0.0 internally               |
 | Public origin       | `APP_URL`, exact HTTPS origin for CSRF enforcement                |
-| Public URL metadata | `PUBLIC_SITE_URL` at runtime; `NEXT_PUBLIC_APP_URL` build default |
+| Public URL metadata | `PUBLIC_SITE_URL`, supplied at runtime                            |
 | Database secret     | `DATABASE_URL`, provided at runtime through the host secret store |
 | Liveness            | `GET /api/health`                                                 |
 | Readiness           | `GET /api/ready`, includes database reachability                  |
 
 The suggested domains are `ruvora.com`, `app.ruvora.com`, and `dev.ruvora.com`. Configure them through environment and routing; do not embed them in financial logic. A single application origin serves all surfaces in this first deployment shape. Distinct marketing/app hosts require explicit routing and canonical URL configuration.
 
-Server-only variables are runtime configuration. Next.js public variables are embedded during the build, so produce an image with the correct public URL for each environment. See the official [Next.js environment guide](https://nextjs.org/docs/app/guides/environment-variables) and [standalone output documentation](https://nextjs.org/docs/app/api-reference/config/next-config-js/output).
+Server-only variables are runtime configuration. Set PUBLIC_SITE_URL for this application's metadata. NEXT_PUBLIC_APP_URL is reserved build-time configuration and is not currently consumed by application components. Any future Next.js public variables will be embedded during the build. See the official [Next.js environment guide](https://nextjs.org/docs/app/guides/environment-variables) and [standalone output documentation](https://nextjs.org/docs/app/api-reference/config/next-config-js/output).
 
 ## Clean deployment sequence
 

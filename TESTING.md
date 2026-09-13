@@ -37,7 +37,7 @@ pnpm test:integration
 
 The corresponding POSIX setup uses `export DATABASE_URL='.../ruvora_test'` and `export TEST_DATABASE_URL="$DATABASE_URL"`. These shell variables apply only to that terminal; do not overwrite the development URL in your normal application terminal.
 
-CI provisions a fresh PostgreSQL 18 service per integration job. It installs the lockfile, generates Prisma, applies committed migrations, seeds isolated fixtures and runs the integration suite. The quality job independently runs lint, typecheck, unit tests and production build. CI is authored here; a successful GitHub run requires a configured remote and actual execution.
+CI provisions a fresh PostgreSQL 18 service per integration job. It installs the lockfile, generates Prisma, applies committed migrations, seeds isolated fixtures and runs the integration suite. The quality job independently runs lint, typecheck, unit tests and production build. The canonical GitHub repository has executed this workflow successfully; RELEASE_REPORT.md links the verified run and exact results. Future commits must pass their own checks.
 
 ## Required financial and policy evidence
 

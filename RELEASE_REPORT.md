@@ -122,7 +122,7 @@ Executed formatting checks, zero-warning ESLint, generated Prisma/Next route typ
 - Final typecheck, lint and production build: passed. Formatting is enforced with Prettier.
 - Final screenshot capture: 14 rendered captures; **0 console errors/page exceptions** in the capture run. Eleven representative screenshots retained in docs/qa.
 - Clean migration/seed: three migrations applied successfully; development fixtures loaded and repeatability checked.
-- Remote CI: pending initial GitHub delivery at report creation; updated evidence appears in section 39.
+- Remote GitHub CI: **both jobs passed** for implementation commit `4f1d172`. Linux unit suite: 111 passed in 798 ms; PostgreSQL integration: 14 passed in 1.99 seconds; Chromium: 16 passed in 1.0 minute. Formatting, lint, typecheck, clean migrations/seed and production build also passed. See section 39.
 - Docker build/boot, Abacus deployment, external penetration/accessibility/load tests: **not executed**.
 
 ## 30. Known limitations
@@ -147,7 +147,7 @@ Use Node 24 and pnpm 11.19.0. Run `pnpm install --frozen-lockfile`, copy `.env.e
 
 ## 35. Environment configuration
 
-DATABASE_URL and TEST_DATABASE_URL must identify separate development/test databases. APP_URL is the exact mutation origin; PUBLIC_SITE_URL controls canonical URLs; NEXT_PUBLIC_APP_URL supplies a public build default. APP_ENV labels the environment. Development seed/funding flags are explicit and ignored/refused in production-sensitive paths. Production must replace local credentials, omit DEMO_PASSWORD, use HTTPS and an uncontaminated database. Bootstrap credentials are one-time operator secrets, never checked into source.
+DATABASE_URL and TEST_DATABASE_URL must identify separate development/test databases. APP_URL is the exact mutation origin; PUBLIC_SITE_URL controls canonical URLs; NEXT_PUBLIC_APP_URL is reserved build-time configuration and is not currently consumed by application components. APP_ENV labels the environment. Development seed/funding flags are explicit and ignored/refused in production-sensitive paths. Production must replace local credentials, omit DEMO_PASSWORD, use HTTPS and an uncontaminated database. Bootstrap credentials are one-time operator secrets, never checked into source.
 
 ## 36. Docker instructions
 
@@ -159,11 +159,11 @@ Canonical remote: https://github.com/david44220/ruvora (private). Working branch
 
 ## 38. commits
 
-Initial baseline: `d4a86c0` — `chore: initialize Ruvora repository baseline`. Implementation and handoff commit identifiers are recorded after the first push in the final report update. The repository log is authoritative for subsequent documentation/CI fixes.
+Initial baseline: `d4a86c0` — `chore: initialize Ruvora repository baseline`. Implemented application: `4f1d172` — `feat: build Ruvora creator economy foundation`. This report and final screenshots are finalized in a following documentation commit. The repository log is authoritative for subsequent changes.
 
 ## 39. PR information if applicable
 
-Draft pull request creation and GitHub Actions verification follow the initial feature push. This section will be updated with the actual PR URL and observed CI outcome; authored workflow files alone are not evidence of a successful remote run.
+Draft [PR #1 — Build Ruvora creator economy foundation](https://github.com/david44220/ruvora/pull/1) targets `develop` from `feature/ruvora-foundation`. No merge was performed. [GitHub Actions run 34761621252](https://github.com/david44220/ruvora/actions/runs/34761621252) passed both quality and integration jobs for implementation commit `4f1d172`; job logs verify 111 unit, 14 database integration and 16 browser tests. The later handoff commit updates documentation and screenshots only. Consult the PR checks for runs after this recorded implementation verification.
 
 ## 40. Abacus deployment readiness
 
