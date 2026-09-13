@@ -1,0 +1,15 @@
+node_modules
+.next
+.cache
+.local
+.pnpm-store
+artwork-output
+assets/masters
+public/assets
+pnpm-lock.yaml
+docs/MASTER_BUILD_BRIEF.md
+test-results
+playwright-report
+coverage
+src/generated
+next-env.d.ts

@@ -1,0 +1,350 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+
+}
+
+enum Role {
+  USER
+  CREATOR
+  ADVERTISER
+  ADMIN
+}
+
+enum CampaignState {
+  DRAFT
+  PENDING_REVIEW
+  ACTIVE
+  PAUSED
+  COMPLETED
+  REJECTED
+  ARCHIVED
+}
+
+enum ActivityType {
+  IMPRESSION
+  QUALIFIED_VIEW
+  CLICK
+  CONVERSION
+  CREATOR_PROMOTION
+  SPONSORED_MISSION
+}
+
+enum ActivityState {
+  PENDING_VALIDATION
+  VALIDATED
+  REJECTED
+  REVERSED
+}
+
+enum RewardState {
+  PENDING
+  VALIDATED
+  REJECTED
+  CONSUMED
+  REVERSED
+}
+
+enum ParticipantCategory {
+  USER
+  CREATOR
+  ADVERTISER
+  REFERRAL
+}
+
+enum AccountKind {
+  CASH_CLEARING
+  CAMPAIGN_ESCROW
+  PLATFORM_REVENUE
+  GLOBAL_DISTRIBUTION_POOL
+  USER_PAYABLE
+  EVENT_PRIZE
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  displayName  String
+  handle       String?  @unique
+  roles        Role[]   @default([USER])
+  locale       String   @default("en")
+  country      String?
+  bio          String   @default("")
+  category     String   @default("Creator")
+  socialLinks  Json     @default("[]")
+  customLinks  Json     @default("[]")
+  followers    Int      @default(0)
+  audienceStatus String @default("SELF_DECLARED")
+  onboarded    Boolean  @default(false)
+  ageEligible  Boolean  @default(false)
+  termsAcceptedAt DateTime?
+  suspended    Boolean  @default(false)
+  economicHold Boolean  @default(false)
+  isDemo       Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  sessions     Session[]
+  campaigns    Campaign[] @relation("Advertiser")
+  activities   Activity[] @relation("Participant")
+  creatorActivities Activity[] @relation("AttributedCreator")
+  rewardUnits  RewardUnit[]
+  xpEntries    XpEntry[]
+  eventPoints  EventPoint[]
+  eventMemberships EventMembership[]
+  accounts     LedgerAccount[]
+  referralsSent Referral[] @relation("Inviter")
+  referralReceived Referral? @relation("Invitee")
+  auditLogs AuditLog[]
+  riskEvents RiskEvent[]
+}
+
+model Session {
+  id        String   @id
+  tokenHash String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([expiresAt])
+}
+
+model RateLimit {
+  key         String   @id
+  count       Int      @default(1)
+  windowEnd   DateTime
+  @@index([windowEnd])
+}
+
+model Campaign {
+  id             String        @id @default(cuid())
+  advertiserId   String
+  name           String
+  description    String        @default("")
+  objective      ActivityType
+  destinationUrl String
+  budgetMinor    BigInt
+  dailyBudgetMinor BigInt
+  unitCostMinor  BigInt
+  currency       String        @default("EUR")
+  state          CampaignState @default(DRAFT)
+  startAt        DateTime
+  endAt          DateTime
+  frequencyCap   Int           @default(3)
+  eventId        String?
+  reviewReason   String?
+  isDemo         Boolean       @default(false)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  advertiser     User          @relation("Advertiser", fields: [advertiserId], references: [id])
+  event          Event?        @relation(fields: [eventId], references: [id])
+  activities     Activity[]
+  accounts       LedgerAccount[]
+  @@index([state, startAt, endAt])
+  @@index([advertiserId, createdAt])
+}
+
+model Activity {
+  id             String        @id @default(cuid())
+  idempotencyKey String        @unique
+  userId         String
+  creatorId      String?
+  campaignId     String
+  eventId        String?
+  type           ActivityType
+  state          ActivityState @default(PENDING_VALIDATION)
+  billableMinor  BigInt         @default(0)
+  evidence       String?
+  reviewReason   String?
+  ruleVersion    String?
+  validatedAt    DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  user           User          @relation("Participant", fields: [userId], references: [id])
+  creator        User?         @relation("AttributedCreator", fields: [creatorId], references: [id])
+  campaign       Campaign      @relation(fields: [campaignId], references: [id])
+  event          Event?        @relation(fields: [eventId], references: [id])
+  rewards        RewardUnit[]
+  xpEntries      XpEntry[]
+  eventPoints    EventPoint[]
+  @@index([campaignId, userId, createdAt])
+  @@index([state, createdAt])
+}
+
+model EconomicRule {
+  id         String   @id @default(cuid())
+  version    String   @unique
+  config     Json
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  distributions Distribution[]
+}
+
+model RewardUnit {
+  id             String      @id @default(cuid())
+  userId         String
+  activityId     String
+  category       ParticipantCategory
+  amountMicros   BigInt
+  state          RewardState @default(VALIDATED)
+  ruleVersion    String
+  distributionId String?
+  createdAt      DateTime    @default(now())
+  user           User        @relation(fields: [userId], references: [id])
+  activity       Activity    @relation(fields: [activityId], references: [id])
+  distribution   Distribution? @relation(fields: [distributionId], references: [id])
+  @@unique([activityId, userId, category])
+  @@index([state, createdAt])
+  @@index([userId, state])
+}
+
+model XpEntry {
+  id         String @id @default(cuid())
+  userId     String
+  activityId String
+  amount     Int
+  reversal   Boolean @default(false)
+  createdAt  DateTime @default(now())
+  user       User @relation(fields: [userId], references: [id])
+  activity   Activity @relation(fields: [activityId], references: [id])
+  @@unique([activityId, userId, reversal])
+  @@index([userId])
+}
+
+model Event {
+  id            String   @id @default(cuid())
+  slug          String   @unique
+  title         String
+  description   String
+  artwork       String   @default("/assets/events/ruvora-event.webp")
+  sponsor       String?
+  startAt       DateTime
+  endAt         DateTime
+  rules         Json
+  state         String   @default("ACTIVE")
+  isDemo        Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  campaigns     Campaign[]
+  activities    Activity[]
+  memberships   EventMembership[]
+  points        EventPoint[]
+  accounts      LedgerAccount[]
+}
+
+model EventMembership {
+  id        String @id @default(cuid())
+  userId    String
+  eventId   String
+  joinedAt  DateTime @default(now())
+  user      User @relation(fields: [userId], references: [id])
+  event     Event @relation(fields: [eventId], references: [id])
+  @@unique([eventId, userId])
+}
+
+model EventPoint {
+  id         String @id @default(cuid())
+  userId     String
+  eventId    String
+  activityId String
+  amount     Int
+  reversal   Boolean @default(false)
+  createdAt  DateTime @default(now())
+  user       User @relation(fields: [userId], references: [id])
+  event      Event @relation(fields: [eventId], references: [id])
+  activity   Activity @relation(fields: [activityId], references: [id])
+  @@unique([activityId, userId, eventId, reversal])
+  @@index([eventId, userId])
+}
+
+model LedgerAccount {
+  id        String @id
+  kind      AccountKind
+  currency  String @default("EUR")
+  userId    String?
+  campaignId String?
+  eventId   String?
+  createdAt DateTime @default(now())
+  user      User? @relation(fields: [userId], references: [id])
+  campaign  Campaign? @relation(fields: [campaignId], references: [id])
+  event     Event? @relation(fields: [eventId], references: [id])
+  entries   LedgerEntry[]
+}
+
+model LedgerTransaction {
+  id             String @id @default(cuid())
+  idempotencyKey String @unique
+  kind           String
+  referenceId    String
+  description    String
+  reversesId     String? @unique
+  createdTxid    BigInt @default(dbgenerated("txid_current()")) @map("created_txid")
+  isDemo         Boolean @default(false)
+  createdAt      DateTime @default(now())
+  reverses       LedgerTransaction? @relation("Reversal", fields: [reversesId], references: [id])
+  reversal       LedgerTransaction? @relation("Reversal")
+  entries        LedgerEntry[]
+  @@index([referenceId])
+}
+
+model LedgerEntry {
+  id             String @id @default(cuid())
+  transactionId  String
+  accountId      String
+  amountMinor    BigInt
+  createdAt      DateTime @default(now())
+  transaction    LedgerTransaction @relation(fields: [transactionId], references: [id])
+  account        LedgerAccount @relation(fields: [accountId], references: [id])
+  @@index([accountId, createdAt])
+  @@unique([transactionId, accountId])
+}
+
+model Distribution {
+  id             String @id @default(cuid())
+  startAt        DateTime
+  endAt          DateTime
+  ruleId         String
+  snapshot       Json
+  fingerprint    String
+  state          String @default("PREVIEW")
+  finalizedAt    DateTime?
+  idempotencyKey String? @unique
+  createdAt      DateTime @default(now())
+  rule           EconomicRule @relation(fields: [ruleId], references: [id])
+  rewardUnits    RewardUnit[]
+  @@index([state, startAt, endAt])
+}
+
+model Referral {
+  id        String @id @default(cuid())
+  inviterId String
+  inviteeId String @unique
+  state     String @default("PENDING")
+  createdAt DateTime @default(now())
+  inviter   User @relation("Inviter", fields: [inviterId], references: [id])
+  invitee   User @relation("Invitee", fields: [inviteeId], references: [id])
+}
+
+model RiskEvent {
+  id        String @id @default(cuid())
+  userId    String
+  kind      String
+  detail    String
+  createdAt DateTime @default(now())
+  user      User @relation(fields: [userId], references: [id])
+  @@index([userId, createdAt])
+}
+
+model AuditLog {
+  id        String @id @default(cuid())
+  actorId   String?
+  action    String
+  targetId  String
+  details   Json
+  requestId String?
+  createdAt DateTime @default(now())
+  actor     User? @relation(fields: [actorId], references: [id])
+  @@index([targetId, createdAt])
+}

@@ -1,0 +1,17 @@
+node_modules
+.next
+.git
+.local
+.pnpm-store
+.cache
+.env
+.env.*
+!.env.example
+test-results
+playwright-report
+coverage
+*.tsbuildinfo
+artwork-output
+public/assets/ruvora/masters
+RELEASE_REPORT.md
+assets/masters
