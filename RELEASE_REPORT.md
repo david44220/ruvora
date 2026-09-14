@@ -1,6 +1,6 @@
 # Ruvora — Pass 02 release report
 
-Pass 02 continues the existing foundation at `cbd762ab274385e6d3e0e129672a22932a5f1c19`. Evidence recorded on 14 September 2026. Local aggregate validation is complete; GitHub publication evidence is recorded below; no live provider or Abacus deployment is claimed.
+Pass 02 continues the existing foundation at `cbd762ab274385e6d3e0e129672a22932a5f1c19`. Evidence recorded on 14 September 2026. Local aggregate validation and GitHub Ubuntu CI passed; publication evidence is recorded below; no live provider or Abacus deployment is claimed.
 
 ## 1. Repository state before Pass 02
 
@@ -139,6 +139,7 @@ Added deterministic attribution/event/security unit coverage and PostgreSQL suit
 - Final `pnpm format:check`, zero-warning ESLint, regenerated Prisma/Next route types and TypeScript all passed.
 - Final production application build passed, 24 dynamic routes. This does not prove Linux container boot or Abacus deployment.
 - Clean/upgrade migrations and schema alignment passed as described above.
+- GitHub Ubuntu CI passed for implementation `58482fb3c3ef8303b4047b3be70c7ccf48ffc7fb`: quality/build and integration/browser jobs. The remote run independently repeated **239 unit**, **68 database** and **20 browser** tests. [Verified implementation run](https://github.com/david44220/ruvora/actions/runs/34853840432).
 
 The database guard also correctly refused an initial integration command pointed at the development database, before running tests. The pg adapter emits a deprecation warning about queued queries; tests completed without invariant failure. Final fixes are tested again rather than hidden by changed expectations.
 
@@ -221,4 +222,8 @@ pnpm test:integration
 
 ## 43. Git branch / commits / PR
 
-Working branch: `feature/pass-02-attribution-events`, based on Pass 01 `cbd762a`. Canonical remote: [david44220/ruvora](https://github.com/david44220/ruvora). Local final checks are complete. The implementation commit and draft PR are published in the next delivery step; GitHub Actions must complete before integration. No automatic merge into `develop`/`main` or production deployment is included.
+Canonical remote: [david44220/ruvora](https://github.com/david44220/ruvora). Published branch: `feature/pass-02-attribution-events`, based on Pass 01 `cbd762a`. Implementation commit: [`58482fb3c3ef8303b4047b3be70c7ccf48ffc7fb`](https://github.com/david44220/ruvora/commit/58482fb3c3ef8303b4047b3be70c7ccf48ffc7fb).
+
+[Draft PR 2](https://github.com/david44220/ruvora/pull/2) targets `develop` and includes the unmerged foundation from PR 1. Both `main` and `develop` still contain neutral baseline `d4a86c0`; the implementation is complete on its feature branch. All 220 committed files were compared with GitHub by path and Git blob hash, with zero missing, extra or mismatched files. Private local secrets were absent from the committed tree.
+
+Implementation [GitHub Actions run 34853840432](https://github.com/david44220/ruvora/actions/runs/34853840432) passed both jobs on Ubuntu, including clean migrations/seed, all test suites and production build. This documentation-only handoff records that verified implementation; its own latest CI result is available in the [PR checks](https://github.com/david44220/ruvora/pull/2/checks). No automatic merge or deployment occurred.
