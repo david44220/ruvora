@@ -22,14 +22,16 @@ Next.js 16.3.5, React 19.3.0, Prisma 7.10.0, Tailwind 4.3.3, TypeScript, Postgre
 
 Luxury warm futurism: obsidian, warm ivory, champagne, amber/copper. Reuse the same canonical interlocking glass/ribbon orb assets across hero/profile/events/dashboard/share surfaces. Three actual raster originals were generated with the built-in image tool. No specific model version is claimed because the tool exposed no model selector. See VISUAL_ASSET_MANIFEST.md.
 
-## Current foundation
+## Current implementation
 
-Identity and multi-role auth, public profile model, campaigns/activity, economy/policy domain services, events/points, ledger/distribution persistence, EN/FR UI and CI/deployment scaffolding are implemented as the first vertical slice. RELEASE_REPORT.md records exact delivered scope and final verification.
+Pass 02 adds opaque visitor/account-bound attribution, trusted creator activity credit and real analytics, direct bounded referrals, separately funded sponsored event reserves and deterministic independent settlement. Security includes encrypted MFA credentials/outbox, token recovery, revocation, signed durable webhooks and approval foundations. See RELEASE_REPORT.md for exact evidence and current branch/PR; Pass 01 is archived under docs/releases.
 
-Local PostgreSQL helper: `pnpm db:local`; loopback 54329; real PG18.4 binary; dev/test databases `ruvora`/`ruvora_test`; persistent `.local/postgres`; clean `pg_ctl` shutdown; never deletes data. Native dependency builds and initial DB startup were verified. Use explicit local `DEMO_PASSWORD` for the seed. The helper and seed are development-only.
+Canonical repo is david44220/ruvora. Feature work targets develop; neither pass is silently promoted into main. Pass 02 branch is feature/pass-02-attribution-events based on Pass 01 cbd762a. Finalized economic history is preserved; use forward migrations only.
+
+Run pnpm dev:configure, pnpm db:local, pnpm db:generate, pnpm db:migrate, pnpm db:seed, pnpm dev. Configure private local secrets before seed. Both demo admins use distinct derived TOTP secrets; critical operations require fresh MFA. Worker: pnpm worker:once. Development mail is private and simulated.
 
 ## Limits and next work
 
-No live payment/payout adapter, trusted social verification, transactional mail delivery or target Abacus deployment. Consult RELEASE_REPORT.md for actual GitHub CI status. A separate explicit first-admin bootstrap script exists; it creates no demo fixtures, rules or money. Target-environment bootstrap verification and operator recovery/MFA remain launch work. Complete recovery/verification, operator MFA, payment reconciliation, trusted ad evidence, privacy/retention workflows, monitoring, restore drills and target Linux/container tests before launch.
+External email/payment/payout delivery and Abacus deployment are not connected. Event settlement enforces dual approval; other high-risk operation types have an approval model plus fresh-MFA gates, with full dual-approval policy integration remaining. Retention is documented, not an automatic erasure service. Provider reconciliation, verified audience evidence, operational monitoring, restore drills, jurisdictional review and target Linux/container validation remain launch gates. Docker is unavailable on this Windows host; never claim a container or live deployment test from an application build.
 
-Docker is absent in the initial Windows environment. Application checks, browser results and exact test counts belong in RELEASE_REPORT.md and must be updated by the final validation pass. Prioritize invariant/concurrency tests and coherent end-to-end flows over expanding shallow screens.
+New tests live only under tests/**/*.test.ts; ignored .local verification checkouts must never be discovered. Financial tests run sequentially against explicit isolated test databases. Browser tests create unique development fixtures and leave immutable history intact. Preserve all original Pass 01 assertions while evolving secure request contracts.

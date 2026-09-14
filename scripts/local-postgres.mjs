@@ -12,7 +12,10 @@ import { promisify } from "node:util";
 import { execFile } from "node:child_process";
 import EmbeddedPostgres from "embedded-postgres";
 
-if (process.env.NODE_ENV === "production") {
+if (
+  process.env.NODE_ENV === "production" ||
+  (process.env.APP_ENV && process.env.APP_ENV !== "development")
+) {
   throw new Error("The embedded PostgreSQL helper is restricted to local development.");
 }
 

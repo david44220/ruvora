@@ -1,3 +1,4 @@
+import { isDevelopment } from "./environment";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { evaluatePersistedPolicy } from "../domains/policy";
@@ -13,6 +14,7 @@ import { requireRole } from "./auth";
 import { account, balance, postLedger } from "./ledger";
 import { activeRules, rulesSchema } from "./rules";
 import { idempotencyKey } from "./campaigns";
+import { currentEventPrizeExposure } from "./event-settlement";
 const fingerprint = (payload: string) => createHash("sha256").update(payload).digest("hex");
 async function calculatePreview(
   tx: Tx,
@@ -22,7 +24,7 @@ async function calculatePreview(
   record: EconomicRule,
 ) {
   const config = rulesSchema.parse(record.config);
-  if (process.env.NODE_ENV === "production")
+  if (!isDevelopment())
     assert(
       (await tx.ledgerEntry.count({
         where: { accountId: "platform:revenue", transaction: { isDemo: true } },
@@ -42,7 +44,7 @@ async function calculatePreview(
     const previous = grouped.get(key);
     const eligible =
       evaluatePersistedPolicy(unit.user, "DISTRIBUTION", config).eligible &&
-      (process.env.NODE_ENV !== "production" || !unit.user.isDemo);
+      (isDevelopment() || !unit.user.isDemo);
     grouped.set(key, {
       userId: unit.userId,
       category: unit.category,
@@ -71,14 +73,23 @@ async function calculatePreview(
     "Revenue corrections require review before distribution.",
     409,
   );
+  const eventExposure = await currentEventPrizeExposure(tx);
   return previewDistribution({
     periodId,
     startAt: startAt.toISOString(),
     endAt: endAt.toISOString(),
     eligibleRevenueMinor,
     rule: config.distribution,
+    eventPrizeExposure: eventExposure,
     participants: [...grouped.values()],
-    margin: { liabilities: config.liabilities, rule: config.margin },
+    margin: {
+      liabilities: {
+        ...config.liabilities,
+        eventLiabilitiesMinor:
+          (config.liabilities.eventLiabilitiesMinor ?? 0n) + eventExposure.unfundedLiabilityMinor,
+      },
+      rule: config.margin,
+    },
   });
 }
 export async function createDistributionPreview(admin: User, input: unknown) {
@@ -189,7 +200,7 @@ export async function commitDistribution(admin: User, input: unknown) {
         kind: "GLOBAL_POOL_ALLOCATION",
         referenceId: distribution.id,
         description: "Fund the Global Distribution Pool for finalized participant allocations",
-        isDemo: process.env.NODE_ENV !== "production",
+        isDemo: isDevelopment(),
         entries: [
           { accountId: "platform:revenue", amountMinor: -preview.distributedMinor },
           { accountId: "pool:global", amountMinor: preview.distributedMinor },
@@ -205,7 +216,7 @@ export async function commitDistribution(admin: User, input: unknown) {
         kind: "REVENUE_DISTRIBUTION",
         referenceId: distribution.id,
         description: `Revenue share ${distribution.startAt.toISOString()} / ${distribution.endAt.toISOString()}`,
-        isDemo: process.env.NODE_ENV !== "production",
+        isDemo: isDevelopment(),
         entries: result.transaction.entries.map((entry) => ({
           accountId: entry.accountKey,
           amountMinor: entry.amountMinor,

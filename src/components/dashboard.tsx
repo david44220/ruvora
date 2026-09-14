@@ -43,6 +43,10 @@ import {
 import { ProfileForm } from "./auth";
 import { AdvertiserScreen, OpportunitiesScreen } from "./campaigns";
 import { AppContext, useDashboard } from "./app-context";
+import { CreatorAnalytics, ReferralsScreen } from "./growth";
+import { EventStudio } from "./event-studio";
+import { SecurityScreen } from "./security";
+import { ProfileModulesEditor } from "./profile-modules";
 export function AppShell({
   children,
   user,
@@ -63,6 +67,14 @@ export function AppShell({
     ["/app/advertiser", "campaignManager", <Aperture key="a" />, user.roles.includes("ADVERTISER")],
     ["/app/opportunities", "opportunities", <Compass key="p" />, true],
     ["/app/events", "navEvents", <Trophy key="e" />, true],
+    [
+      "/app/event-studio",
+      "p2EventStudio",
+      <Trophy key="es" />,
+      user.roles.includes("CREATOR") || user.roles.includes("ADVERTISER"),
+    ],
+    ["/app/referrals", "p2Referrals", <Users key="rf" />, true],
+    ["/app/security", "p2AccountSecurity", <Shield key="sc" />, true],
     ["/app/wallet", "rewards", <Wallet key="w" />, true],
     ["/app/activity", "activity", <ActivityIcon key="r" />, true],
     ["/app/settings", "settings", <Settings key="s" />, true],
@@ -258,6 +270,7 @@ function CreatorScreen({ data }: { data: Dashboard }) {
           icon={<CircleDollarSign />}
         />
       </div>
+      <CreatorAnalytics />
       <div className="profile-studio-card">
         <div>
           <Eyebrow>{t("publicLink")}</Eyebrow>
@@ -318,7 +331,7 @@ function WalletScreen({ data }: { data: Dashboard }) {
         {!data.transactions.length ? (
           <Empty />
         ) : (
-          <div className="table-scroll">
+          <div className="table-scroll wallet-ledger">
             <table>
               <thead>
                 <tr>
@@ -332,10 +345,20 @@ function WalletScreen({ data }: { data: Dashboard }) {
                   <tr key={entry.id}>
                     <td>
                       <strong>
-                        {entry.transaction.description ||
-                          entry.transaction.kind ||
-                          entry.transaction.reference ||
-                          entry.transaction.id.slice(0, 12)}
+                        {entry.transaction.kind === "EVENT_PRIZE_SETTLEMENT"
+                          ? t("p2PrizeLedger")
+                          : entry.transaction.kind === "REVENUE_DISTRIBUTION"
+                            ? t("p2DistributionLedger")
+                            : entry.transaction.kind === "DEVELOPMENT_DEPOSIT"
+                              ? t("p2DepositLedger")
+                              : entry.transaction.kind === "DEVELOPMENT_REFUND"
+                                ? t("p2RefundLedger")
+                                : entry.transaction.kind === "DEVELOPMENT_CHARGEBACK"
+                                  ? t("p2ChargebackLedger")
+                                  : entry.transaction.description ||
+                                    entry.transaction.kind ||
+                                    entry.transaction.reference ||
+                                    entry.transaction.id.slice(0, 12)}
                       </strong>
                     </td>
                     <td>{new Date(entry.createdAt).toLocaleDateString(locale)}</td>
@@ -408,13 +431,23 @@ function AppEvents() {
     </>
   );
 }
-export function DashboardScreen({ screen }: { screen: string }) {
+export function DashboardScreen({
+  screen,
+  preferredCampaignId,
+}: {
+  screen: string;
+  preferredCampaignId?: string;
+}) {
   const { data, reload } = useDashboard();
   const { t } = useLocale();
   if (!data) return null;
+  if (screen === "event-studio") return <EventStudio />;
+  if (screen === "security") return <SecurityScreen />;
+  if (screen === "referrals") return <ReferralsScreen />;
   if (screen === "creator") return <CreatorScreen data={data} />;
   if (screen === "advertiser") return <AdvertiserScreen data={data} reload={reload} />;
-  if (screen === "opportunities") return <OpportunitiesScreen />;
+  if (screen === "opportunities")
+    return <OpportunitiesScreen preferredCampaignId={preferredCampaignId} />;
   if (screen === "wallet") return <WalletScreen data={data} />;
   if (screen === "events") return <AppEvents />;
   if (screen === "activity")
@@ -432,6 +465,7 @@ export function DashboardScreen({ screen }: { screen: string }) {
         <PageTitle title={t("settings")} description={t("onboardingIntro")} />
         <div className="panel">
           <ProfileForm user={data.user} onSaved={() => void reload()} />
+          <ProfileModulesEditor user={data.user} onSaved={() => void reload()} />
         </div>
       </>
     );

@@ -8,6 +8,19 @@ import { account, balance, postLedger } from "./ledger";
 import { activeRules } from "./rules";
 import { assertEligible } from "./profiles";
 import { idempotencyKey, reason } from "./campaigns";
+import {
+  attributionTokenHash,
+  attributionSessionKey,
+  resolveActivityAttribution,
+  verifyActivityAttribution,
+  recordGrowth,
+  type AttributionTokens,
+} from "./attribution";
+import { awardReferralForActivity } from "./referrals";
+import { assertEventActivityEligible, eventPointsAward } from "./events";
+import { campaignRegionAllowed } from "./campaign-eligibility";
+import { getConversionDecision, hasVerifiedConversion } from "./providers/conversions";
+import { isDevelopment } from "./environment";
 const activitySchema = z
   .object({
     campaignId: z.string().min(1).max(100),
@@ -21,18 +34,21 @@ const activitySchema = z
     ]),
     idempotencyKey,
     eventId: z.string().max(100).optional(),
-    creatorHandle: z
-      .string()
-      .regex(/^[a-z0-9_]{3,24}$/)
-      .optional(),
     evidence: z.string().trim().min(10).max(1000).optional(),
   })
   .strict();
-export async function submitActivity(user: User, input: unknown) {
+export async function submitActivity(user: User, input: unknown, tokens?: AttributionTokens) {
   const value = activitySchema.parse(input);
+  const fingerprint = attributionTokenHash(
+    JSON.stringify({
+      body: value,
+      context: tokens?.attributionToken ? attributionTokenHash(tokens.attributionToken) : null,
+      visitor: tokens?.visitorToken ? attributionTokenHash(tokens.visitorToken) : null,
+    }),
+  );
   await limitRate("activity", user.id, 30, 3600);
   return atomic(async (tx) => {
-    await assertEligible(tx, user.id);
+    const freshUser = await assertEligible(tx, user.id);
     const key = `${user.id}:${value.idempotencyKey}`;
     const existing = await tx.activity.findUnique({
       where: { idempotencyKey: key },
@@ -45,7 +61,9 @@ export async function submitActivity(user: User, input: unknown) {
           existing.type === value.type &&
           existing.eventId === (value.eventId ?? null) &&
           existing.evidence === (value.evidence ?? null) &&
-          (existing.creator?.handle ?? null) === (value.creatorHandle ?? null),
+          (existing.requestFingerprint
+            ? existing.requestFingerprint === fingerprint
+            : !existing.creatorId && !tokens?.attributionToken),
         "IDEMPOTENCY_CONFLICT",
         "This key was used for a different activity.",
         409,
@@ -61,9 +79,15 @@ export async function submitActivity(user: User, input: unknown) {
       409,
     );
     assert(
-      process.env.NODE_ENV !== "production" || !campaign.isDemo,
+      isDevelopment() || !campaign.isDemo,
       "DEMO_PRODUCTION_BLOCKED",
       "Development campaigns cannot accept production activity.",
+      403,
+    );
+    assert(
+      campaignRegionAllowed(freshUser, campaign),
+      "CAMPAIGN_REGION_INELIGIBLE",
+      "This campaign is unavailable in your country.",
       403,
     );
     assert(
@@ -118,22 +142,15 @@ export async function submitActivity(user: User, input: unknown) {
         "Join an active event before submitting event activity.",
       );
     }
-    let creatorId: string | undefined;
-    if (value.creatorHandle) {
-      const creator = await tx.user.findUnique({ where: { handle: value.creatorHandle } });
-      const { config } = await activeRules(tx);
-      assert(
-        creator &&
-          creator.roles.includes("CREATOR") &&
-          creator.followers >= config.creatorFollowerThreshold &&
-          creator.id !== user.id &&
-          creator.id !== campaign.advertiserId,
-        "CREATOR_INELIGIBLE",
-        "The attributed creator is not eligible.",
-      );
-      await assertEligible(tx, creator.id);
-      creatorId = creator.id;
-    }
+    if (value.eventId) await assertEventActivityEligible(tx, value.eventId, user.id, now, "SUBMIT");
+    const attributed = await resolveActivityAttribution(
+      tx,
+      freshUser,
+      campaign,
+      value.eventId,
+      tokens,
+    );
+    const creatorId = attributed?.context.creatorId ?? undefined;
     const activity = await tx.activity.create({
       data: {
         userId: user.id,
@@ -143,6 +160,10 @@ export async function submitActivity(user: User, input: unknown) {
         type: value.type,
         idempotencyKey: key,
         evidence: value.evidence,
+        requestFingerprint: fingerprint,
+        ...(attributed
+          ? { attributionId: attributed.context.id, attributionSnapshot: attributed.snapshot }
+          : {}),
       },
     });
     await tx.auditLog.create({
@@ -152,6 +173,17 @@ export async function submitActivity(user: User, input: unknown) {
         targetId: activity.id,
         details: { state: "PENDING_VALIDATION", campaignId: campaign.id },
       },
+    });
+    await recordGrowth(tx, {
+      dedupeKey: `campaign-start:${attributed ? attributionSessionKey(attributed.context) : user.id}:${campaign.id}`,
+      type: "CAMPAIGN_START",
+      attributionId: attributed?.context.id,
+      shareLinkId: attributed?.context.shareLinkId,
+      creatorId,
+      userId: user.id,
+      campaignId: campaign.id,
+      eventId: value.eventId,
+      isDemo: campaign.isDemo || Boolean(attributed?.context.isDemo),
     });
     return { activity };
   });
@@ -167,6 +199,13 @@ export async function reviewActivity(admin: User, activityId: string, input: unk
     .strict()
     .parse(input);
   return atomic(async (tx) => {
+    const reviewer = await tx.user.findUniqueOrThrow({ where: { id: admin.id } });
+    assert(
+      reviewer.roles.includes("ADMIN") && !reviewer.suspended && !reviewer.economicHold,
+      "FORBIDDEN",
+      "An active independent administrator is required.",
+      403,
+    );
     const activity = await tx.activity.findUnique({
       where: { id: activityId },
       include: { campaign: true },
@@ -191,7 +230,26 @@ export async function reviewActivity(admin: User, activityId: string, input: unk
       "An administrator cannot validate activity benefiting their own account.",
       403,
     );
+    const referral = await tx.referral.findUnique({
+      where: { inviteeId: activity.userId },
+      select: { inviterId: true, attributionId: true },
+    });
+    assert(
+      !referral?.attributionId || referral.inviterId !== admin.id,
+      "REVIEW_CONFLICT",
+      "An administrator cannot review activity benefiting their referral account.",
+      403,
+    );
     if (value.decision === "REJECT") {
+      if (activity.eventId)
+        await assertEventActivityEligible(
+          tx,
+          activity.eventId,
+          activity.userId,
+          activity.createdAt,
+          "REVERSE",
+          admin.id,
+        );
       const rejected = await tx.activity.update({
         where: { id: activityId },
         data: { state: "REJECTED", reviewReason: value.reason },
@@ -207,15 +265,49 @@ export async function reviewActivity(admin: User, activityId: string, input: unk
       return { activity: rejected };
     }
     assert(
-      process.env.NODE_ENV !== "production" || !activity.campaign.isDemo,
+      isDevelopment() || !activity.campaign.isDemo,
       "DEMO_PRODUCTION_BLOCKED",
       "Development campaigns cannot generate production revenue.",
       403,
     );
-    await assertEligible(tx, activity.userId);
+    const participant = await assertEligible(tx, activity.userId);
+    assert(
+      campaignRegionAllowed(participant, activity.campaign),
+      "CAMPAIGN_REGION_INELIGIBLE",
+      "The participant is outside the campaign region policy.",
+      403,
+    );
+    await verifyActivityAttribution(tx, activity, activity.campaign);
     await assertEligible(tx, activity.campaign.advertiserId);
     if (activity.creatorId) await assertEligible(tx, activity.creatorId);
+    const guardedEvent = activity.eventId
+      ? await assertEventActivityEligible(
+          tx,
+          activity.eventId,
+          activity.userId,
+          activity.createdAt,
+          "VALIDATE",
+          admin.id,
+        )
+      : null;
     const { record, reward } = await activeRules(tx);
+    const providerDecision =
+      activity.type === "CONVERSION"
+        ? await getConversionDecision(tx, activity.id, activity.campaignId)
+        : null;
+    assert(
+      providerDecision !== "REJECTED" && providerDecision !== "REVERSED",
+      "CONVERSION_PROVIDER_REJECTED",
+      "The conversion provider rejected or reversed this activity.",
+      409,
+    );
+    const conversionVerified =
+      activity.type !== "CONVERSION" ||
+      (await hasVerifiedConversion(tx, activity.id, activity.campaignId)) ||
+      (isDevelopment() &&
+        activity.campaign.isDemo &&
+        value.evidenceVerified &&
+        Boolean(activity.evidence));
     const start = new Date(activity.createdAt);
     start.setUTCHours(0, 0, 0, 0);
     const end = new Date(start.getTime() + 86_400_000);
@@ -261,7 +353,7 @@ export async function reviewActivity(admin: User, activityId: string, input: unk
       dailyRemainingMinor: dailyRemaining,
       riskScore: 0,
       reviewThreshold: 100,
-      conversionEvidenceVerified: value.evidenceVerified && Boolean(activity.evidence),
+      conversionEvidenceVerified: conversionVerified,
     });
     assert(
       decision.state === "VALIDATED",
@@ -297,7 +389,7 @@ export async function reviewActivity(admin: User, activityId: string, input: unk
         { accountId: "platform:revenue", amountMinor: activity.campaign.unitCostMinor },
       ],
     });
-    const awards = calculateActivityRewards(
+    const computedAwards = calculateActivityRewards(
       {
         activityId,
         type: activity.type,
@@ -310,12 +402,40 @@ export async function reviewActivity(admin: User, activityId: string, input: unk
       },
       reward,
     );
+    const awards =
+      computedAwards.eventPoints && guardedEvent
+        ? {
+            ...computedAwards,
+            eventPoints: {
+              ...computedAwards.eventPoints,
+              amount: await eventPointsAward(
+                tx,
+                guardedEvent.id,
+                activity.userId,
+                activity.type,
+                activity.createdAt,
+                computedAwards.eventPoints.amount,
+              ),
+            },
+          }
+        : computedAwards;
     await tx.rewardUnit.createMany({
       data: awards.units.map((unit) => ({ ...unit, ruleVersion: record.version })),
     });
     if (awards.xp.amount > 0) await tx.xpEntry.create({ data: { ...awards.xp, activityId } });
     if (awards.eventPoints && awards.eventPoints.amount > 0)
-      await tx.eventPoint.create({ data: { ...awards.eventPoints, activityId } });
+      await tx.eventPoint.create({
+        data: {
+          ...awards.eventPoints,
+          activityId,
+          ruleVersion: guardedEvent?.configVersion ?? "legacy-event-v1",
+        },
+      });
+    const referralAward = await awardReferralForActivity(
+      tx,
+      activity,
+      awards.units.find((unit) => unit.category === "USER")?.amountMicros ?? 0n,
+    );
     const updated = await tx.activity.update({
       where: { id: activityId },
       data: {
@@ -331,7 +451,14 @@ export async function reviewActivity(admin: User, activityId: string, input: unk
         actorId: admin.id,
         action: "ACTIVITY_VALIDATED_BILLED_REWARDED",
         targetId: activityId,
-        details: jsonValue({ ...value, transactionId: transaction.id, awards, ruleId: record.id }),
+        details: jsonValue({
+          ...value,
+          transactionId: transaction.id,
+          awards,
+          referralAward,
+          ruleId: record.id,
+          attributionId: activity.attributionId,
+        }),
       },
     });
     return { activity: updated, awards };
@@ -341,6 +468,13 @@ export async function reverseActivity(admin: User, activityId: string, input: un
   requireRole(admin, "ADMIN");
   const value = z.object({ reason }).strict().parse(input);
   return atomic(async (tx) => {
+    const reviewer = await tx.user.findUniqueOrThrow({ where: { id: admin.id } });
+    assert(
+      reviewer.roles.includes("ADMIN") && !reviewer.suspended && !reviewer.economicHold,
+      "FORBIDDEN",
+      "An active independent administrator is required.",
+      403,
+    );
     const activity = await tx.activity.findUnique({
       where: { id: activityId },
       include: { rewards: true, xpEntries: true, eventPoints: true, campaign: true },
@@ -362,11 +496,26 @@ export async function reverseActivity(admin: User, activityId: string, input: un
       403,
     );
     assert(
+      activity.rewards.every((unit) => unit.userId !== admin.id),
+      "REVIEW_CONFLICT",
+      "An administrator cannot reverse activity benefiting their own reward account.",
+      403,
+    );
+    assert(
       activity.rewards.every((unit) => unit.state !== "CONSUMED"),
       "FINALIZED_HISTORY",
       "Activity in a finalized distribution requires a separately reviewed recovery operation; historical results remain immutable.",
       409,
     );
+    if (activity.eventId)
+      await assertEventActivityEligible(
+        tx,
+        activity.eventId,
+        activity.userId,
+        activity.createdAt,
+        "REVERSE",
+        admin.id,
+      );
     const original = await tx.ledgerTransaction.findUniqueOrThrow({
       where: { idempotencyKey: `activity:${activityId}` },
       include: { entries: true },
@@ -400,6 +549,7 @@ export async function reverseActivity(admin: User, activityId: string, input: un
         .map((entry) => ({
           userId: entry.userId,
           eventId: entry.eventId,
+          ruleVersion: entry.ruleVersion,
           activityId,
           amount: -entry.amount,
           reversal: true,

@@ -38,7 +38,7 @@ export function Stat({
   label: string;
   value: string | number;
   hint?: string;
-  icon: ReactNode;
+  icon?: ReactNode;
 }) {
   return (
     <article className="stat-card">
@@ -128,7 +128,7 @@ export function EventCard({ event }: { event: RuvoraEvent }) {
           <Trophy size={12} />
           {t("eventTag")}
         </span>
-        <h3>{event.title}</h3>
+        <h3>{event.localizedContent?.[locale]?.title || event.title}</h3>
         <small>
           {t("ends")} {new Date(event.endAt).toLocaleDateString(locale)}
         </small>

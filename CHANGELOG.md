@@ -1,5 +1,13 @@
 # Changelog
 
+## Pass 02 — attribution and sponsored settlement (unreleased)
+
+- Connected public creator links to immutable visitor/account attribution, bounded direct referrals and validated creator/advertiser analytics.
+- Added separately funded event prize reserves, frozen deterministic standings, independent MFA approvals and exactly-once ledger settlement.
+- Added encrypted security email, account recovery, replay-resistant MFA, session revocation, durable signed callbacks and explicitly simulated payment adapters.
+- Preserved finalized history with four forward migrations and expanded PostgreSQL concurrency and browser coverage.
+- See [RELEASE_REPORT.md](RELEASE_REPORT.md) for exact validation, GitHub delivery and remaining production launch gates.
+
 ## 0.1.0 — initial foundation (unreleased)
 
 - Established Ruvora's independent product identity and modular monolith structure.

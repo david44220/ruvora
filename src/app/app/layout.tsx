@@ -8,7 +8,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   if (!user) redirect("/login");
   if (!user.onboarded) redirect("/onboarding");
   return (
-    <AppShell user={publicUser(user) as User} development={process.env.APP_ENV !== "production"}>
+    <AppShell
+      user={JSON.parse(JSON.stringify(publicUser(user))) as User}
+      development={process.env.APP_ENV !== "production"}
+    >
       {children}
     </AppShell>
   );

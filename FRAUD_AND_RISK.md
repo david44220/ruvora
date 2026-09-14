@@ -28,3 +28,11 @@ A reversal before distribution removes pending/validated RU through an auditable
 ## P0 persistence adapter
 
 `evaluatePersistedPolicy` adapts the database's adult-attestation, onboarding and terms-acceptance fields to the same central module. It accepts PARTICIPATION, CREATOR_MONETIZATION and DISTRIBUTION, returns explicit eligibility/reasons, checks fresh account holds/country/terms/onboarding, and applies the creator role and follower threshold. The stored `ageEligible` flag is self-declared adult attestation, not externally verified date of birth. Stronger age assurance and provider KYC remain separate policy integration work.
+
+## Pass 02 trust boundaries
+
+Attribution originates in server-owned opaque share entries, never participant creator identifiers. Separate random visitor tokens and immutable context policy prevent cross-account and replay alteration. Direct referrals exclude self/advertiser relationships and duplicate activity credit. Account holds and current eligibility are rechecked inside economic transactions.
+
+Event configuration locks after submission, requires independent media/event approval and fully reserved prizes before activation. Owners/sponsors/hosts cannot participate in their own prizes; held/disqualified accounts are excluded and ranking changes invalidate a stale preview. Event points and activities freeze at settlement; finalized history needs separately reviewed compensation rather than silent edits.
+
+Signed provider conversion evidence does not make arbitrary client submissions billable. Verified/reversed evidence records and risk holds are durable; independent review remains the financial decision. Payment deposits, refunds and chargebacks are development simulations. Cryptographic controls do not establish external measurement quality, KYC/KYB or anti-Sybil guarantees.

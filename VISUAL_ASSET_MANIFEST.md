@@ -49,3 +49,9 @@ Run `node scripts/optimize-assets.mjs` after installing dependencies. It reads o
 Encoding strips incidental metadata from delivery files, so this manifest and prompt document preserve provenance. The original masters retain the generated file contents.
 
 Metadata/dimensions were checked after encoding. Local image-view tools encountered the same Windows sandbox helper failure during the encoding pass; final encoded composition and responsive usage must be inspected through the application's browser acceptance pass rather than claimed from metadata alone.
+
+## Pass 02 share cards
+
+No new AI artwork was generated. `public/assets/share/ruvora-orb-card.png` is a 600×600 PNG delivery derivative of the same canonical orb, created for Next ImageResponse compatibility. `/share-card/profile/[handle]`, `/share-card/event/[slug]` and `/share-card/milestone/[handle]` render 1200×630 cards using bounded escaped public text and EN/FR dictionaries. Milestone cards require actual XP of at least 100. Draft/private/unavailable records produce 404. Cards preserve the canonical warm-metal/amber/obsidian family and carry a development label for demo records.
+
+The derivative has no new model provenance; format conversion is not generation. Reproduction is included in `scripts/optimize-assets.mjs`. Browser QA and exact screenshots are referenced by RELEASE_REPORT.md.

@@ -35,13 +35,13 @@ export async function generateMetadata({
       title: `${profile.displayName} · Ruvora Link`,
       description: profile.bio || undefined,
       url: `/@${profile.handle}`,
-      images: [{ url: "/assets/orbs/ruvora-orb.webp", width: 1254, height: 1254 }],
+      images: [{ url: `/share-card/profile/${profile.handle}`, width: 1200, height: 630 }],
     },
     twitter: {
       card: "summary_large_image",
       title: profile.displayName,
       description: profile.bio || undefined,
-      images: ["/assets/orbs/ruvora-orb.webp"],
+      images: [`/share-card/profile/${profile.handle}`],
     },
   };
 }

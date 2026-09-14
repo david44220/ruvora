@@ -15,10 +15,17 @@ export interface User {
   customLinks: { title: string; url: string }[];
   isDemo: boolean;
   economicHold: boolean;
+  emailVerifiedAt?: string | null;
+  mfaEnabledAt?: string | null;
+  profileModules?: ProfileModule[];
   audienceStatus: string;
 }
 export interface Campaign {
   canParticipate?: boolean;
+  description?: string;
+  allowedCountries?: string[];
+  creatorCategories?: string[];
+  minimumCreatorFollowers?: number;
   id: string;
   name: string;
   objective: string;
@@ -46,6 +53,21 @@ export interface Activity {
   ruleVersionId?: string;
 }
 export interface RuvoraEvent {
+  localizedContent?: {
+    en: { title: string; description: string; rules: string };
+    fr: { title: string; description: string; rules: string };
+  };
+  configuration?: {
+    milestones?: { points: number; title: { en: string; fr: string } }[];
+    rewardTiers?: { fromRank: number; toRank: number; shareBps: number }[];
+  };
+  configVersion?: string;
+  sponsor?: string | null;
+  rules?: string;
+  prizeBudgetMinor?: string;
+  fundedMinor?: string;
+  fundingState?: string;
+  settlement?: { id: string; state: string; finalizedAt: string } | null;
   id: string;
   slug: string;
   title: string;
@@ -93,6 +115,7 @@ export interface Dashboard {
   fundingEnabled: boolean;
 }
 export interface EventDetail {
+  personalPrizeMinor?: string | null;
   event: RuvoraEvent;
   leaderboard: {
     userId: string;
@@ -103,4 +126,10 @@ export interface EventDetail {
   }[];
   joined: boolean;
   personal: { points: number; rank?: number } | null;
+}
+
+export type ProfileModuleType = "OPPORTUNITY" | "EVENT" | "REFERRAL" | "LINKS" | "SOCIALS";
+export interface ProfileModule {
+  type: ProfileModuleType;
+  visible: boolean;
 }

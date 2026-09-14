@@ -5,7 +5,11 @@ import { assert } from "./errors";
 import { requireRole } from "./auth";
 import { account, balance, postLedger } from "./ledger";
 import { activeRules, minor } from "./rules";
-import { assertEligible, safeUrl } from "./profiles";
+import { assertEligible } from "./profiles";
+import { safeUrl } from "./validation";
+import { evaluatePersistedPolicy } from "../domains/policy";
+import { campaignRegionAllowed, canCreatorPromote } from "./campaign-eligibility";
+import { isDevelopment } from "./environment";
 const positiveMinor = minor.refine((v) => v > 0n, "Amount must be positive.");
 export const idempotencyKey = z.string().regex(/^[a-zA-Z0-9:_-]{8,100}$/);
 export const reason = z.string().trim().min(10).max(500);
@@ -28,6 +32,12 @@ const campaignSchema = z
     startAt: z.iso.datetime(),
     endAt: z.iso.datetime(),
     eventId: z.string().max(100).optional(),
+    allowedCountries: z
+      .array(z.string().regex(/^[A-Z]{2}$/))
+      .max(250)
+      .default([]),
+    creatorCategories: z.array(z.string().trim().min(1).max(40)).max(20).default([]),
+    minimumCreatorFollowers: z.number().int().min(0).max(1000000000).default(0),
     frequencyCap: z.number().int().min(1).max(10).default(3),
   })
   .strict();
@@ -57,9 +67,15 @@ export async function createCampaign(user: User, input: unknown) {
     if (value.eventId) {
       const event = await tx.event.findUnique({ where: { id: value.eventId } });
       assert(
-        event && event.state === "ACTIVE" && startAt >= event.startAt && endAt <= event.endAt,
+        event &&
+          !["CANCELLED", "REJECTED", "COMPLETED", "SETTLING", "SETTLED"].includes(event.state) &&
+          (!event.ownerId
+            ? event.state === "ACTIVE"
+            : event.ownerId === user.id || event.sponsorId === user.id) &&
+          startAt >= event.startAt &&
+          endAt <= event.endAt,
         "EVENT_WINDOW",
-        "Linked campaigns must fall within an active event window.",
+        "Linked campaigns must belong to an authorized event and fit its participation window.",
       );
     }
     const campaign = await tx.campaign.create({
@@ -74,13 +90,22 @@ export async function createCampaign(user: User, input: unknown) {
 }
 export async function fundCampaign(user: User, campaignId: string, input: unknown) {
   requireRole(user, "ADVERTISER");
-  assert(
-    process.env.NODE_ENV !== "production" && process.env.ALLOW_DEMO_FUNDING === "true",
-    "PAYMENTS_UNAVAILABLE",
-    "Live payments are not connected. Development funding is disabled.",
-    503,
-  );
-  const value = z.object({ amountMinor: positiveMinor, idempotencyKey }).strict().parse(input);
+  const value = z
+    .object({
+      amountMinor: positiveMinor,
+      idempotencyKey,
+      source: z.enum(["DEVELOPMENT", "AVAILABLE"]).default("DEVELOPMENT"),
+    })
+    .strict()
+    .parse(input);
+  const development = value.source === "DEVELOPMENT";
+  if (development)
+    assert(
+      isDevelopment() && process.env.ALLOW_DEMO_FUNDING === "true",
+      "PAYMENTS_UNAVAILABLE",
+      "Development funding is disabled. Reserve confirmed available funds instead.",
+      503,
+    );
   return atomic(async (tx) => {
     await assertEligible(tx, user.id);
     const campaign = await tx.campaign.findUnique({ where: { id: campaignId } });
@@ -96,14 +121,30 @@ export async function fundCampaign(user: User, campaignId: string, input: unknow
       "This campaign cannot be funded.",
       409,
     );
-    const key = `demo-fund:${user.id}:${value.idempotencyKey}`;
-    const existing = await tx.ledgerTransaction.findUnique({
-      where: { idempotencyKey: key },
+    const key =
+      (development ? "demo-fund:" : "campaign-reserve:") + user.id + ":" + value.idempotencyKey;
+    const matches = await tx.ledgerTransaction.findMany({
+      where: {
+        idempotencyKey: {
+          in: [
+            "demo-fund:" + user.id + ":" + value.idempotencyKey,
+            "campaign-reserve:" + user.id + ":" + value.idempotencyKey,
+          ],
+        },
+      },
       include: { entries: true },
     });
+    assert(
+      matches.length <= 1,
+      "IDEMPOTENCY_CONFLICT",
+      "This request identity has conflicting historical funding records.",
+      409,
+    );
+    const existing = matches[0];
     if (existing) {
       assert(
-        existing.referenceId === campaignId &&
+        existing.idempotencyKey === key &&
+          existing.referenceId === campaignId &&
           existing.entries.some(
             (entry) =>
               entry.accountId === `campaign:${campaignId}` &&
@@ -113,44 +154,79 @@ export async function fundCampaign(user: User, campaignId: string, input: unknow
         "This key was used for different funding.",
         409,
       );
-      return { transaction: existing, isDemo: true };
+      return { transaction: existing, isDemo: existing.isDemo };
     }
-    const funding =
+    const funded =
       (
         await tx.ledgerEntry.aggregate({
-          where: { accountId: `campaign:${campaignId}`, transaction: { kind: "DEMO_DEPOSIT" } },
+          where: {
+            accountId: `campaign:${campaignId}`,
+            transaction: { kind: { in: ["DEMO_DEPOSIT", "CAMPAIGN_FUND"] } },
+            amountMinor: { gt: 0n },
+          },
           _sum: { amountMinor: true },
         })
       )._sum.amountMinor ?? 0n;
     assert(
-      funding + value.amountMinor <= campaign.budgetMinor,
+      funded + value.amountMinor <= campaign.budgetMinor,
       "BUDGET_EXCEEDED",
       "Funding exceeds the total campaign budget.",
       409,
     );
-    await account(tx, "platform:cash-clearing", "CASH_CLEARING");
+    const availableId = `advertiser:${user.id}`;
+    await account(tx, availableId, "ADVERTISER_AVAILABLE", { userId: user.id });
     await account(tx, `campaign:${campaignId}`, "CAMPAIGN_ESCROW", { campaignId });
+    if (development) {
+      await account(tx, "platform:cash-clearing", "CASH_CLEARING");
+      await postLedger(tx, {
+        key: key + ":deposit",
+        kind: "DEMO_DEPOSIT",
+        referenceId: campaignId,
+        description: "Development advertiser funding; no real payment collected",
+        isDemo: true,
+        entries: [
+          { accountId: "platform:cash-clearing", amountMinor: -value.amountMinor },
+          { accountId: availableId, amountMinor: value.amountMinor },
+        ],
+      });
+    }
+    const simulated =
+      development ||
+      campaign.isDemo ||
+      (await tx.ledgerEntry.count({
+        where: { accountId: availableId, transaction: { isDemo: true } },
+      })) > 0;
+    assert(
+      isDevelopment() || !simulated,
+      "DEMO_PRODUCTION_BLOCKED",
+      "Simulated funds cannot finance staging or production campaigns.",
+      403,
+    );
     const transaction = await postLedger(tx, {
       key,
-      kind: "DEMO_DEPOSIT",
+      kind: "CAMPAIGN_FUND",
       referenceId: campaignId,
-      description: "Development funding; no real payment collected",
-      isDemo: true,
+      description: "Reserve advertiser funds for campaign media",
+      isDemo: simulated,
       entries: [
-        { accountId: "platform:cash-clearing", amountMinor: -value.amountMinor },
+        { accountId: availableId, amountMinor: -value.amountMinor },
         { accountId: `campaign:${campaignId}`, amountMinor: value.amountMinor },
       ],
     });
-    await tx.campaign.update({ where: { id: campaignId }, data: { isDemo: true } });
+    if (simulated) await tx.campaign.update({ where: { id: campaignId }, data: { isDemo: true } });
     await tx.auditLog.create({
       data: {
         actorId: user.id,
-        action: "DEMO_CAMPAIGN_FUNDED",
+        action: "CAMPAIGN_FUNDED",
         targetId: campaignId,
-        details: jsonValue({ amountMinor: value.amountMinor, transactionId: transaction.id }),
+        details: jsonValue({
+          source: value.source,
+          amountMinor: value.amountMinor,
+          transactionId: transaction.id,
+        }),
       },
     });
-    return { transaction, isDemo: true };
+    return { transaction, isDemo: simulated };
   });
 }
 export async function submitCampaign(user: User, campaignId: string) {
@@ -202,6 +278,13 @@ export async function reviewCampaign(admin: User, campaignId: string, input: unk
     .strict()
     .parse(input);
   return atomic(async (tx) => {
+    const reviewer = await tx.user.findUniqueOrThrow({ where: { id: admin.id } });
+    assert(
+      reviewer.roles.includes("ADMIN") && !reviewer.suspended && !reviewer.economicHold,
+      "FORBIDDEN",
+      "An active administrator is required.",
+      403,
+    );
     const campaign = await tx.campaign.findUnique({ where: { id: campaignId } });
     assert(
       campaign && campaign.state === "PENDING_REVIEW",
@@ -242,7 +325,11 @@ export async function reviewCampaign(admin: User, campaignId: string, input: unk
     return { campaign: updated };
   });
 }
-export async function listCampaigns(user?: User | null) {
+export async function listCampaigns(
+  user?: User | null,
+  options: { forCreator?: boolean; objective?: string; category?: string } = {},
+) {
+  const rule = user ? await activeRules(db).catch(() => null) : null;
   const campaigns = await db.campaign.findMany({
     where: user?.roles.includes("ADVERTISER")
       ? { OR: [{ advertiserId: user.id }, { state: "ACTIVE" }] }
@@ -253,39 +340,61 @@ export async function listCampaigns(user?: User | null) {
   });
   return {
     campaigns: await Promise.all(
-      campaigns.map(async (campaign) => {
-        const remainingMinor = await balance(db, `campaign:${campaign.id}`);
-        const now = new Date();
-        const canParticipate =
-          campaign.state === "ACTIVE" &&
-          campaign.startAt <= now &&
-          campaign.endAt > now &&
-          remainingMinor >= campaign.unitCostMinor &&
-          campaign.advertiserId !== user?.id;
-        if (campaign.advertiserId === user?.id || user?.roles.includes("ADMIN"))
+      campaigns
+        .filter((campaign) => {
+          if (campaign.advertiserId === user?.id || user?.roles.includes("ADMIN")) return true;
+          if (
+            user &&
+            (!rule ||
+              !evaluatePersistedPolicy(user, "PARTICIPATION", rule.config).eligible ||
+              !campaignRegionAllowed(user, campaign))
+          )
+            return false;
+          if (options.forCreator && (!user || !canCreatorPromote(user, campaign))) return false;
+          if (options.objective && campaign.objective !== options.objective) return false;
+          if (
+            options.category &&
+            campaign.creatorCategories.length > 0 &&
+            !campaign.creatorCategories.some(
+              (v) => v.toLowerCase() === options.category!.toLowerCase(),
+            )
+          )
+            return false;
+          return true;
+        })
+        .map(async (campaign) => {
+          const remainingMinor = await balance(db, `campaign:${campaign.id}`);
+          const now = new Date();
+          const canParticipate =
+            campaign.state === "ACTIVE" &&
+            campaign.startAt <= now &&
+            campaign.endAt > now &&
+            remainingMinor >= campaign.unitCostMinor &&
+            campaign.advertiserId !== user?.id;
+          if (campaign.advertiserId === user?.id || user?.roles.includes("ADMIN"))
+            return {
+              ...campaign,
+              remainingMinor,
+              canParticipate,
+              validatedCount: await db.activity.count({
+                where: { campaignId: campaign.id, state: "VALIDATED" },
+              }),
+            };
           return {
-            ...campaign,
-            remainingMinor,
+            id: campaign.id,
+            name: campaign.name,
+            description: campaign.description,
+            objective: campaign.objective,
+            destinationUrl: campaign.destinationUrl,
+            state: campaign.state,
+            startAt: campaign.startAt,
+            endAt: campaign.endAt,
+            eventId: campaign.eventId,
+            event: campaign.event,
+            isDemo: campaign.isDemo,
             canParticipate,
-            validatedCount: await db.activity.count({
-              where: { campaignId: campaign.id, state: "VALIDATED" },
-            }),
           };
-        return {
-          id: campaign.id,
-          name: campaign.name,
-          description: campaign.description,
-          objective: campaign.objective,
-          destinationUrl: campaign.destinationUrl,
-          state: campaign.state,
-          startAt: campaign.startAt,
-          endAt: campaign.endAt,
-          eventId: campaign.eventId,
-          event: campaign.event,
-          isDemo: campaign.isDemo,
-          canParticipate,
-        };
-      }),
+        }),
     ),
   };
 }

@@ -44,4 +44,15 @@ outputs.push({
   height: 630,
   bytes: (await stat(sharePath)).size,
 });
+const cardPath = resolve(root, "public", "assets", "share", "ruvora-orb-card.png");
+await sharp(resolve(root, "public", "assets", "orbs", "ruvora-orb-640.webp"))
+  .resize(600, 600)
+  .png({ compressionLevel: 9 })
+  .toFile(cardPath);
+outputs.push({
+  file: "public/assets/share/ruvora-orb-card.png",
+  width: 600,
+  height: 600,
+  bytes: (await stat(cardPath)).size,
+});
 console.log(JSON.stringify(outputs, null, 2));

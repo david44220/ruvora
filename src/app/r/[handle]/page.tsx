@@ -1,11 +1,14 @@
 import { redirect, notFound } from "next/navigation";
-import { db } from "@/server/db";
+import { getReferralEntry } from "@/server/attribution";
+import { AppError } from "@/server/errors";
 export default async function Referral({ params }: { params: Promise<{ handle: string }> }) {
   const { handle } = await params;
-  const creator = await db.user.findUnique({
-    where: { handle },
-    select: { suspended: true, onboarded: true },
-  });
-  if (!creator || creator.suspended || !creator.onboarded) notFound();
-  redirect(`/register?ref=${encodeURIComponent(handle)}`);
+  let entry;
+  try {
+    entry = await getReferralEntry(handle);
+  } catch (error) {
+    if (error instanceof AppError && error.status < 500) notFound();
+    throw error;
+  }
+  redirect(entry.url);
 }

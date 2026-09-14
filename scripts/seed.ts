@@ -11,20 +11,36 @@ import {
 } from "../src/server/campaigns";
 import { submitActivity, reviewActivity } from "../src/server/activities";
 import { joinEvent } from "../src/server/events";
+import { getProfileEntry, startAttribution, bindAttribution } from "../src/server/attribution";
+import { seedDevelopmentMfa } from "../src/server/security/mfa";
+import { isDevelopment } from "../src/server/environment";
+import { decodeBase32 } from "../src/server/security/totp";
+import { sealSecret } from "../src/server/security/crypto";
 
-if (process.env.NODE_ENV === "production" || process.env.ALLOW_DEV_SEED !== "true")
+if (!isDevelopment() || process.env.ALLOW_DEV_SEED !== "true")
   throw new Error("Development seed requires ALLOW_DEV_SEED=true and is forbidden in production.");
 if (process.env.ALLOW_DEMO_FUNDING !== "true")
   throw new Error("Seed requires explicit ALLOW_DEMO_FUNDING=true; no real funds are collected.");
 const password = z.string().min(12).max(128).parse(process.env.DEMO_PASSWORD);
+decodeBase32(z.string().parse(process.env.DEMO_TOTP_SECRET));
+sealSecret("preflight", "development-seed");
 const passwordHash = await hashPassword(password);
 const now = Date.now();
 try {
   await atomic(async (tx) => {
-    if (!(await tx.economicRule.findFirst({ where: { active: true } })))
+    if (!(await tx.economicRule.findUnique({ where: { version: "development-pass02-v1" } }))) {
+      await tx.economicRule.updateMany({ where: { active: true }, data: { active: false } });
       await tx.economicRule.create({
-        data: { version: "development-economy-v1", config: jsonValue(DEVELOPMENT_RULES) },
+        data: { version: "development-pass02-v1", config: jsonValue(DEVELOPMENT_RULES) },
       });
+      await tx.auditLog.create({
+        data: {
+          action: "DEVELOPMENT_RULES_VERSION_CREATED",
+          targetId: "development-pass02-v1",
+          details: { isDemo: true, existingEconomicHistoryPreserved: true },
+        },
+      });
+    }
     const people = [
       {
         handle: "mira",
@@ -98,6 +114,17 @@ try {
         socialLinks: [],
         customLinks: [],
       },
+      {
+        handle: "ruvora_reviewer",
+        displayName: "Ruvora Independent Reviewer",
+        email: "demo-admin-reviewer@ruvora.test",
+        roles: ["USER", "ADMIN"] as const,
+        followers: 0,
+        category: "Operations",
+        bio: "Independent development approval account.",
+        socialLinks: [],
+        customLinks: [],
+      },
     ];
     for (const person of people) {
       const existing = await tx.user.findUnique({ where: { email: person.email } });
@@ -112,6 +139,7 @@ try {
             onboarded: true,
             ageEligible: true,
             termsAcceptedAt: new Date(now),
+            emailVerifiedAt: new Date(now),
             country: "FR",
             locale: "en",
             socialLinks: jsonValue(person.socialLinks),
@@ -141,6 +169,11 @@ try {
   });
   const advertiser = await db.user.findUniqueOrThrow({ where: { email: "studio@ruvora.test" } });
   const admin = await db.user.findUniqueOrThrow({ where: { email: "admin@ruvora.test" } });
+  const reviewer = await db.user.findUniqueOrThrow({
+    where: { email: "demo-admin-reviewer@ruvora.test" },
+  });
+  await seedDevelopmentMfa(admin.id);
+  await seedDevelopmentMfa(reviewer.id);
   let campaign = await db.campaign.findFirst({
     where: { name: "Objects with a story", advertiserId: advertiser.id },
   });
@@ -182,15 +215,25 @@ try {
     const participant = await db.user.findUniqueOrThrow({ where: { email } });
     await joinEvent(participant, "demo-event-creator-rush");
     for (let index = 0; index < 2; index++) {
-      const result = await submitActivity(participant, {
-        campaignId: campaign.id,
-        type: "QUALIFIED_VIEW",
-        eventId: "demo-event-creator-rush",
-        creatorHandle: participant.handle === "mira" ? "leon" : "mira",
-        idempotencyKey: `development-seed-activity-${index}`,
-        evidence:
-          "Development example: participant reviewed the sample design story and supplied feedback. Not a live advertising outcome.",
-      });
+      const key = `development-seed-activity-${index}`;
+      // Repeated seeds preserve all previous economic results and legacy provenance.
+      if (await db.activity.findUnique({ where: { idempotencyKey: `${participant.id}:${key}` } }))
+        continue;
+      const entry = await getProfileEntry(participant.handle === "mira" ? "leon" : "mira");
+      const attribution = await startAttribution(entry.slug);
+      await bindAttribution(participant, attribution);
+      const result = await submitActivity(
+        participant,
+        {
+          campaignId: campaign.id,
+          type: "QUALIFIED_VIEW",
+          eventId: "demo-event-creator-rush",
+          idempotencyKey: key,
+          evidence:
+            "Development example: participant reviewed the sample design story and supplied feedback. Not a live advertising outcome.",
+        },
+        attribution,
+      );
       if (result.activity.state === "PENDING_VALIDATION")
         await reviewActivity(admin, result.activity.id, {
           decision: "VALIDATE",
@@ -201,20 +244,32 @@ try {
     }
   }
   const pendingUser = await db.user.findUniqueOrThrow({ where: { email: "alex@ruvora.test" } });
-  await submitActivity(pendingUser, {
-    campaignId: campaign.id,
-    type: "QUALIFIED_VIEW",
-    eventId: "demo-event-creator-rush",
-    creatorHandle: "mira",
-    idempotencyKey: "development-pending-review-v1",
-    evidence:
-      "Development example waiting for administrator review. No RU, XP, Event Points or spend has been generated.",
-  });
+  if (
+    !(await db.activity.findUnique({
+      where: { idempotencyKey: `${pendingUser.id}:development-pending-review-v1` },
+    }))
+  ) {
+    const entry = await getProfileEntry("mira");
+    const attribution = await startAttribution(entry.slug);
+    await bindAttribution(pendingUser, attribution);
+    await submitActivity(
+      pendingUser,
+      {
+        campaignId: campaign.id,
+        type: "QUALIFIED_VIEW",
+        eventId: "demo-event-creator-rush",
+        idempotencyKey: "development-pending-review-v1",
+        evidence:
+          "Development example waiting for administrator review. No RU, XP, Event Points or spend has been generated.",
+      },
+      attribution,
+    );
+  }
   console.log(
     "Development seed complete. All example accounts, campaigns and accounting are marked demo. No real funds, advertising outcomes or payouts.",
   );
   console.log(
-    "Accounts: alex@ruvora.test, mira@ruvora.test, leon@ruvora.test, nora@ruvora.test, studio@ruvora.test, admin@ruvora.test. Password: the DEMO_PASSWORD you supplied; never logged.",
+    "Accounts: alex@ruvora.test, mira@ruvora.test, leon@ruvora.test, nora@ruvora.test, studio@ruvora.test, admin@ruvora.test, demo-admin-reviewer@ruvora.test. Password: the DEMO_PASSWORD you supplied; never logged.",
   );
 } finally {
   await db.$disconnect();

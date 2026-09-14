@@ -25,13 +25,15 @@ Mutations enforce the configured request origin and server-side role/ownership c
 
 The separate `scripts/bootstrap-admin.ts` creates the first non-demo administrator from explicit operator environment values, refuses an existing admin or existing email, and writes an audit event. It initializes no economic rules or money.
 
-Email verification and password reset are architectural follow-up work, not active delivery features. A provider-neutral notification port should accept a template key, locale, recipient and single-use token URL. Store only token digests with purpose, expiry and consumed timestamp; consume transactionally, avoid account enumeration, rate-limit issuance/redemption, and revoke sessions after a successful password reset. Add a transactional outbox so database state and mail delivery cannot drift. No fake “verified” badge or success message should substitute for a completed mail flow.
+Email verification, password reset, TOTP enrollment/recovery and session revocation are implemented. Single-use tokens and recovery codes are stored as digests; TOTP and outbox bodies are authenticated-encrypted using a separate server key. Password reset revokes all sessions. Administrators need a recent password plus unreplayed TOTP for critical HTTP mutations. Independent approval requests snapshot operation, target, payload and version; event settlement consumes a separately approved request inside its financial transaction. Other operation types have the foundation and MFA gate, with broader dual-approval enforcement reserved for Pass 03.
+
+Provider callbacks have a separate raw-body route. HMAC covers provider, timestamp and exact body; bounded timestamps and immutable provider/event keys reject replay mismatches. The durable inbox and encrypted mail outbox use leases, bounded retries and dead-letter states. A scheduled worker runs bounded batches; no Redis is required. Real external adapters are intentionally unavailable.
 
 ## Economic data flow
 
 1. An advertiser prepares and submits a campaign for review.
 2. Campaign funding is recorded through a ledger operation. The current development adapter emits simulated credits only.
-3. Participants submit eligible activity, which enters a pending validation state.
+3. A public creator Link establishes an opaque, visitor-bound first-touch context from a server-owned entry. Authentication binds it to one account. Participants submit eligible activity using only the trusted HttpOnly cookie context; creator handles in financial requests are rejected.
 4. An authorized independent review validates or rejects evidence. Validation applies deduplication, eligibility, frequency/budget controls and rule versions inside the application transaction.
 5. Validated activity can independently create monetary postings, participant-class RU, XP and Event Points. A deposit alone creates no final RU.
 6. A distribution preview snapshots period eligibility and rule inputs and applies the Margin Governor.
@@ -47,14 +49,20 @@ The schema covers users/sessions/rate limits, campaigns/activity, versioned econ
 
 Social URLs and follower counts begin as self-declared information. They are distinguished from manual review or trusted external verification. Provider-neutral social connectors may be introduced later; scraping and unofficial verification are not dependencies.
 
-Referrals are bounded to direct attribution. Signup does not generate financial value. Quests, achievements, expanded analytics, sponsored prizes and payout provider processing remain follow-up capabilities unless the release report explicitly records a completed implementation.
+Referrals are direct, versioned and bounded by per-action, per-referral and period caps. Registration records acquisition but grants no RU or money. Creator and advertiser analytics aggregate actual acquisition, activity, RU and ledger records. Sponsored event ownership, media approval, prize reservation, deterministic ranking freeze and independent settlement are transactional services. Quests, a full achievement catalog, delegated co-hosting, nonzero event RU bonuses and external payouts remain future work.
 
 ## Operational decisions
 
-PostgreSQL is also the initial transactional coordination boundary. There is no Redis, background queue deployment or microservice dependency. Introduce a queue only when durable asynchronous work requires it, using an outbox/inbox protocol and idempotent consumers. Extract a domain only after its boundaries and scale justify the complexity.
+PostgreSQL is also the initial transactional coordination boundary. There is no Redis or microservice dependency. Durable inbox/outbox records run through `pnpm worker:once`; the host must schedule it and monitor failures. Extract a domain only after its boundaries and scale justify the complexity.
 
 Next standalone output keeps runtime deployment portable. Production migrations run in a separate job. The embedded PostgreSQL package is an optional local development convenience and never the production database. Configuration lives in environment or versioned database rules; public-domain defaults do not govern economics.
 
 ## Known limits
 
-This architecture provides a foundation, not a payment license, fraud-proof measurement system or compliance certification. Live payments/payouts, trusted conversion delivery, external social verification, transactional email, full privacy workflows, production operator recovery/hardening, monitoring integrations and recovery drills are launch work. Automated checks and browser verification must be reported by actual execution in [RELEASE_REPORT.md](RELEASE_REPORT.md).
+This architecture provides a foundation, not a payment license, fraud-proof measurement system or compliance certification. Live payment/payout and email delivery adapters, external social verification, automated retention/deletion operations, monitoring integrations and target recovery drills are launch work. Signed conversion processing is implemented, but provider deployment and trust agreements are not verified. Automated checks and browser verification must be reported by actual execution in [RELEASE_REPORT.md](RELEASE_REPORT.md).
+
+## Pass 02 persistence
+
+Four forward migrations add attribution/share/growth and direct-referral credits, event configuration/reserves/settlements, MFA/tokens/approvals/providers, and public-module/campaign-discovery fields. Prisma models include the corresponding restrictive foreign keys. Raw SQL also enforces append-only financial origins, finalized state freezes and deferred accounting reconciliation. Never replace these migrations with `db push`. PostgreSQL serialization retries cover Prisma P2034 and the pg adapter’s P2010 SQLSTATE 40001/40P01 wrappers.
+
+Public profile modules store order and visibility separately from user-authored links. Server projections choose eligible funded opportunities. Dynamic profile/event/earned-milestone cards use escaped database text and one canonical PNG derivative; no remote image fetch or new artwork model is involved.

@@ -13,6 +13,7 @@ import { useResource, useAction } from "@/lib/hooks";
 import { type Campaign, type Activity, type User } from "@/lib/types";
 import { PageTitle, Stat } from "./workspace-ui";
 import { Loading, Notice, Empty, Status } from "./ui";
+import { Pass02Admin } from "./admin-pass02";
 interface AdminData {
   campaigns: Campaign[];
   activities: (Activity & { evidence?: string })[];
@@ -22,6 +23,10 @@ interface AdminData {
   rules: { id: string; version: string; config: unknown } | null;
   profitability: {
     retainedRevenueMinor: string;
+    grossValidatedRevenueMinor: string;
+    eventPrizeLiabilitiesMinor: string;
+    advertiserAvailableMinor: string;
+    distributionPoolMinor: string;
     userLiabilitiesMinor: string;
     campaignLiabilitiesMinor: string;
     targetOperatingProfitMinor: string;
@@ -312,6 +317,24 @@ export function AdminScreen() {
         <Stat label={t("campaignReviews")} value={d.campaigns.length} icon={<ShieldCheck />} />
         <Stat label={t("activityReviews")} value={d.activities.length} icon={<ActivityIcon />} />
       </div>
+      <div className="stats-grid">
+        <Stat
+          label={t("p2GrossRevenue")}
+          value={minorMoney(d.profitability.grossValidatedRevenueMinor, locale)}
+        />
+        <Stat
+          label={t("p2PrizeLiability")}
+          value={minorMoney(d.profitability.eventPrizeLiabilitiesMinor, locale)}
+        />
+        <Stat
+          label={t("p2AvailableFunds")}
+          value={minorMoney(d.profitability.advertiserAvailableMinor, locale)}
+        />
+        <Stat
+          label={t("p2PoolLiability")}
+          value={minorMoney(d.profitability.distributionPoolMinor, locale)}
+        />
+      </div>
       <div className="admin-grid">
         <section className="panel">
           <div className="panel-header">
@@ -383,6 +406,7 @@ export function AdminScreen() {
           </table>
         </div>
       </section>
+      <Pass02Admin />
     </>
   );
 }

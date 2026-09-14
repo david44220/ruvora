@@ -6,6 +6,8 @@ import { requireRole, publicUser } from "./auth";
 import { balance } from "./ledger";
 import { activeRules, createRules } from "./rules";
 import { reason } from "./campaigns";
+import { publicEvent } from "./events";
+import { isDevelopment } from "./environment";
 import { assert } from "./errors";
 export async function getDashboard(user: User) {
   const [
@@ -87,7 +89,7 @@ export async function getDashboard(user: User) {
     rewardUnits: ru,
     activities,
     campaigns: enrichedCampaigns,
-    events: events.map((item) => item.event),
+    events: events.map((item) => publicEvent(item.event)),
     transactions,
     eligibility: {
       followerThreshold: threshold,
@@ -97,8 +99,7 @@ export async function getDashboard(user: User) {
       ),
       earningsGuaranteed: false,
     },
-    fundingEnabled:
-      process.env.NODE_ENV !== "production" && process.env.ALLOW_DEMO_FUNDING === "true",
+    fundingEnabled: isDevelopment() && process.env.ALLOW_DEMO_FUNDING === "true",
   };
 }
 export async function getAdmin(user: User) {
@@ -160,6 +161,34 @@ export async function getAdmin(user: User) {
       : null,
     profitability: {
       retainedRevenueMinor: await balance(db, "platform:revenue"),
+      grossValidatedRevenueMinor:
+        (
+          await db.ledgerEntry.aggregate({
+            where: { accountId: "platform:revenue", transaction: { kind: "VALIDATED_ACTIVITY" } },
+            _sum: { amountMinor: true },
+          })
+        )._sum.amountMinor ?? 0n,
+      eventPrizeLiabilitiesMinor:
+        (
+          await db.ledgerEntry.aggregate({
+            where: { account: { kind: "EVENT_PRIZE" } },
+            _sum: { amountMinor: true },
+          })
+        )._sum.amountMinor ?? 0n,
+      advertiserAvailableMinor:
+        (
+          await db.ledgerEntry.aggregate({
+            where: { account: { kind: "ADVERTISER_AVAILABLE" } },
+            _sum: { amountMinor: true },
+          })
+        )._sum.amountMinor ?? 0n,
+      distributionPoolMinor:
+        (
+          await db.ledgerEntry.aggregate({
+            where: { account: { kind: "GLOBAL_DISTRIBUTION_POOL" } },
+            _sum: { amountMinor: true },
+          })
+        )._sum.amountMinor ?? 0n,
       userLiabilitiesMinor:
         (
           await db.ledgerEntry.aggregate({
@@ -189,6 +218,13 @@ export async function setAccountHold(admin: User, userId: string, input: unknown
     .parse(input);
   assert(userId !== admin.id, "SELF_HOLD", "Use another administrator to review your account.");
   return atomic(async (tx) => {
+    const fresh = await tx.user.findUniqueOrThrow({ where: { id: admin.id } });
+    assert(
+      fresh.roles.includes("ADMIN") && !fresh.suspended && !fresh.economicHold,
+      "FORBIDDEN",
+      "An active administrator is required.",
+      403,
+    );
     const updated = await tx.user.update({
       where: { id: userId },
       data: {
@@ -217,5 +253,14 @@ export async function setAccountHold(admin: User, userId: string, input: unknown
 }
 export async function updateEconomicRules(admin: User, input: unknown) {
   requireRole(admin, "ADMIN");
-  return atomic((tx) => createRules(tx, admin.id, input));
+  return atomic(async (tx) => {
+    const fresh = await tx.user.findUniqueOrThrow({ where: { id: admin.id } });
+    assert(
+      fresh.roles.includes("ADMIN") && !fresh.suspended && !fresh.economicHold,
+      "FORBIDDEN",
+      "An active administrator is required.",
+      403,
+    );
+    return createRules(tx, admin.id, input);
+  });
 }

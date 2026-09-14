@@ -2,16 +2,20 @@ import { z } from "zod";
 import { evaluatePersistedPolicy } from "../domains/policy";
 import type { User } from "@prisma/client";
 import { atomic, db, jsonValue, type Tx } from "./db";
-import { assert } from "./errors";
+import { AppError, assert } from "./errors";
 import { activeRules } from "./rules";
+import { isDevelopment } from "./environment";
 import { publicUser } from "./auth";
-export const safeUrl = z
-  .url()
-  .max(2048)
-  .refine((value) => {
-    const url = new URL(value);
-    return url.protocol === "https:" && !url.username && !url.password;
-  }, "Use a public HTTPS URL.");
+import {
+  getProfileEntry,
+  getCreatorCampaignEntry,
+  getCreatorEventEntry,
+  getReferralEntry,
+} from "./attribution";
+import { publicEvent } from "./events";
+import { listCampaigns } from "./campaigns";
+import { safeUrl } from "./validation";
+export { safeUrl } from "./validation";
 const profileSchema = z
   .object({
     handle: z
@@ -102,7 +106,7 @@ export async function assertEligible(tx: Tx, userId: string) {
     403,
   );
   assert(
-    process.env.NODE_ENV !== "production" || !user.isDemo,
+    isDevelopment() || !user.isDemo,
     "DEMO_PRODUCTION_BLOCKED",
     "Development accounts cannot perform production economic operations.",
     403,
@@ -122,22 +126,84 @@ export async function getPublicProfile(handle: string) {
       customLinks: true,
       followers: true,
       audienceStatus: true,
+      profileModules: true,
       isDemo: true,
       suspended: true,
       roles: true,
       createdAt: true,
     },
   });
-  assert(user && !user.suspended, "PROFILE_NOT_FOUND", "This profile is not available.", 404);
+  assert(
+    user && !user.suspended && (isDevelopment() || !user.isDemo),
+    "PROFILE_NOT_FOUND",
+    "This profile is not available.",
+    404,
+  );
   const xp =
     (await db.xpEntry.aggregate({ where: { userId: user.id }, _sum: { amount: true } }))._sum
       .amount ?? 0;
+  let entry: { slug: string; url: string } | null = null;
+  let referralEntry: { slug: string; url: string } | null = null;
+  const opportunities: {
+    id: string;
+    name: string;
+    description: string;
+    objective: string;
+    isDemo: boolean;
+    url: string;
+  }[] = [];
+  const trackedEvents: Record<string, string> = {};
+  try {
+    entry = await getProfileEntry(handle);
+    const creator = await db.user.findUniqueOrThrow({ where: { id: user.id } });
+    const available = await listCampaigns(creator, { forCreator: true });
+    for (const campaign of available.campaigns.filter((c) => c.canParticipate).slice(0, 3)) {
+      try {
+        const link = await getCreatorCampaignEntry(handle, campaign.id);
+        opportunities.push({
+          id: campaign.id,
+          name: campaign.name,
+          description: campaign.description,
+          objective: campaign.objective,
+          isDemo: campaign.isDemo,
+          url: link.url,
+        });
+      } catch (error) {
+        if (!(error instanceof AppError)) throw error;
+      }
+    }
+  } catch (error) {
+    if (!(error instanceof AppError)) throw error;
+  }
+  try {
+    referralEntry = await getReferralEntry(handle);
+  } catch (error) {
+    if (!(error instanceof AppError)) throw error;
+  }
+  const events = await db.event.findMany({
+    where: {
+      state: "ACTIVE",
+      visibility: "PUBLIC",
+      ...(isDevelopment() ? {} : { isDemo: false }),
+      memberships: { some: { userId: user.id } },
+    },
+    take: 4,
+  });
+  if (entry)
+    for (const event of events) {
+      try {
+        trackedEvents[event.id] = (await getCreatorEventEntry(handle, event.id)).url;
+      } catch (error) {
+        if (!(error instanceof AppError)) throw error;
+      }
+    }
   return {
+    entry,
+    referralEntry,
+    opportunities,
+    trackedEvents,
     profile: { ...user, xp, level: Math.floor(Math.sqrt(Math.max(0, xp) / 100)) + 1 },
-    events: await db.event.findMany({
-      where: { state: "ACTIVE", memberships: { some: { userId: user.id } } },
-      take: 4,
-    }),
+    events: events.map(publicEvent),
     campaigns: await db.campaign.findMany({
       where: { state: "ACTIVE", advertiserId: user.id },
       take: 4,
@@ -152,4 +218,41 @@ export async function getPublicProfile(handle: string) {
       },
     }),
   };
+}
+
+export async function saveProfileModules(user: User, input: unknown) {
+  const modules = z
+    .object({
+      modules: z
+        .array(
+          z
+            .object({
+              type: z.enum(["OPPORTUNITY", "EVENT", "REFERRAL", "LINKS", "SOCIALS"]),
+              visible: z.boolean(),
+            })
+            .strict(),
+        )
+        .length(5)
+        .refine(
+          (rows) => new Set(rows.map((row) => row.type)).size === 5,
+          "Each supported section must appear once.",
+        ),
+    })
+    .strict()
+    .parse(input);
+  return atomic(async (tx) => {
+    const updated = await tx.user.update({
+      where: { id: user.id },
+      data: { profileModules: jsonValue(modules.modules) },
+    });
+    await tx.auditLog.create({
+      data: {
+        actorId: user.id,
+        action: "PROFILE_MODULES_UPDATED",
+        targetId: user.id,
+        details: jsonValue(modules),
+      },
+    });
+    return { user: publicUser(updated) };
+  });
 }

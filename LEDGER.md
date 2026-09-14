@@ -29,3 +29,17 @@ Database transactions must cover all associated writes: campaign budget/spend re
 `reverseTransaction` creates a new balanced journal with exact negated postings and a reference to the original. It requires a reason and refuses repeated reversals or reversal-of-reversal shortcuts. Storage must enforce at most one full reversal per original journal. Partial refunds require explicitly modelled partial-correction operations and cumulative amount constraints; the full-reversal helper is not a partial refund engine.
 
 Never delete financial history to resolve fraud. Corrections after revenue distribution require economic review and compensating entries, with holds where funds are unavailable. Payment and payout provider integrations must be reconciled before any live-money launch. No live financial-provider success is represented by these domain functions.
+
+## Sponsored prize journals (Pass 02)
+
+| Operation                | Debit bucket                                  | Credit bucket                                                                   |
+| ------------------------ | --------------------------------------------- | ------------------------------------------------------------------------------- |
+| Reserve prize funding    | `advertiser:{sponsorId}` ADVERTISER_AVAILABLE | `event:{eventId}:prize` EVENT_PRIZE                                             |
+| Settle the event         | its complete EVENT_PRIZE balance              | exact winner `user:{userId}` USER_PAYABLE allocations and unused sponsor refund |
+| Cancel an eligible event | its complete EVENT_PRIZE balance              | original sponsor ADVERTISER_AVAILABLE                                           |
+
+These operations call the existing `postLedger` inside the lifecycle/settlement serializable transaction; no mutable balance field exists. Funding grants no RU, XP or Event Points. Prize funding comes from already available sponsor funds, with development provider receipts isolated from staging and production. The existing USER_PAYABLE account identity is reused for both revenue distributions and event prizes, while the journals retain their distinct origins.
+
+Migration `202609140005_events` adds exact account-owner identities, event-specific allowed journal kinds, counterparty checks and deferred reconciliation against the immutable settlement snapshot. A renamed operation cannot route prize funds into platform revenue or another event. Active obligations stay fully funded; settled/cancelled pools must be empty. The existing deferred balanced-journal and protected nonnegative-account constraints apply to advertiser available and prize accounts as well.
+
+Event command keys retain actor, scope, kind and canonical payload hash in append-only EventOperation records. Finalization stores and compares the complete request payload. Serializable retries include the Prisma pg adapter's raw-query SQLSTATE serialization/deadlock path. See [EVENT_SETTLEMENT.md](EVENT_SETTLEMENT.md) for the independent approval and immutable final snapshot contract. Tests verify internal payable credits; no live external payout is claimed.

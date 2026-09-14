@@ -21,12 +21,18 @@ export async function atomic<T>(work: (tx: Tx) => Promise<T>): Promise<T> {
         timeout: 20_000,
       });
     } catch (error) {
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === "P2034" &&
-        attempt < 4
-      )
-        continue;
+      // Raw FOR UPDATE queries use P2010 in the pg adapter, with the original
+      // SQLSTATE nested in driverAdapterError.cause rather than Prisma P2034.
+      if (error instanceof Prisma.PrismaClientKnownRequestError && attempt < 4) {
+        const meta = error.meta as
+          { code?: string; driverAdapterError?: { cause?: { originalCode?: string } } } | undefined;
+        const sqlState = meta?.code ?? meta?.driverAdapterError?.cause?.originalCode;
+        if (
+          error.code === "P2034" ||
+          (error.code === "P2010" && (sqlState === "40001" || sqlState === "40P01"))
+        )
+          continue;
+      }
       throw error;
     }
   }

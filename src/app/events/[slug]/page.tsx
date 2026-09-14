@@ -1,8 +1,20 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { isDevelopment } from "@/server/environment";
+import { getEventEntry } from "@/server/attribution";
+import { AppError } from "@/server/errors";
 import { db } from "@/server/db";
 import { EventPage } from "@/components/public-pages";
 export const dynamic = "force-dynamic";
+const visibleStates = [
+  "ACTIVE",
+  "UPCOMING",
+  "PAUSED",
+  "COMPLETED",
+  "SETTLING",
+  "SETTLED",
+  "SCHEDULED",
+];
 export async function generateMetadata({
   params,
 }: {
@@ -10,27 +22,37 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { slug } = await params;
   const event = await db.event.findUnique({ where: { slug } });
-  if (!event) return { title: "Ruvora", robots: { index: false } };
+  if (!event || !visibleStates.includes(event.state) || (!isDevelopment() && event.isDemo))
+    return { title: "Ruvora", robots: { index: false, follow: false } };
   return {
     title: event.title,
     description: event.description,
+    robots: event.visibility !== "PUBLIC" ? { index: false, follow: false } : undefined,
     alternates: { canonical: `/events/${slug}` },
     openGraph: {
       title: event.title,
       description: event.description,
       url: `/events/${slug}`,
-      images: [{ url: "/assets/events/ruvora-event.webp", width: 1672, height: 941 }],
+      images: [{ url: `/share-card/event/${slug}`, width: 1200, height: 630 }],
     },
     twitter: {
       card: "summary_large_image",
       title: event.title,
       description: event.description,
-      images: ["/assets/events/ruvora-event.webp"],
+      images: [`/share-card/event/${slug}`],
     },
   };
 }
 export default async function Event({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  if (!(await db.event.findUnique({ where: { slug } }))) notFound();
-  return <EventPage slug={slug} />;
+  const event = await db.event.findUnique({ where: { slug } });
+  if (!event || !visibleStates.includes(event.state) || (!isDevelopment() && event.isDemo))
+    notFound();
+  let entry;
+  try {
+    entry = await getEventEntry(slug);
+  } catch (error) {
+    if (!(error instanceof AppError)) throw error;
+  }
+  return <EventPage slug={slug} entryUrl={entry?.url} />;
 }

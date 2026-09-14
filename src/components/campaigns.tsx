@@ -9,10 +9,13 @@ import { useAction, useResource } from "@/lib/hooks";
 import { type Campaign, type Dashboard } from "@/lib/types";
 import { Notice, Status, Empty, Loading } from "./ui";
 import { PageTitle, Stat } from "./workspace-ui";
+import { AdvertiserAnalytics, TrackedShare } from "./growth";
+import type { ManagedEvent } from "./event-studio";
 import { useDashboard } from "./app-context";
 export function CampaignForm({ onCreated }: { onCreated: () => void }) {
   const { t } = useLocale();
   const action = useAction();
+  const events = useResource<{ events: ManagedEvent[] }>("/events/manage");
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
@@ -20,6 +23,16 @@ export function CampaignForm({ onCreated }: { onCreated: () => void }) {
       () =>
         api("/campaigns", {
           name: f.get("name"),
+          ...(f.get("eventId") ? { eventId: f.get("eventId") } : {}),
+          allowedCountries: String(f.get("allowedCountries") || "")
+            .split(",")
+            .map((v) => v.trim().toUpperCase())
+            .filter(Boolean),
+          creatorCategories: String(f.get("creatorCategories") || "")
+            .split(",")
+            .map((v) => v.trim())
+            .filter(Boolean),
+          minimumCreatorFollowers: Number(f.get("minimumCreatorFollowers") || 0),
           objective: f.get("objective"),
           destinationUrl: f.get("destinationUrl"),
           budgetMinor: f.get("budgetMinor"),
@@ -71,7 +84,31 @@ export function CampaignForm({ onCreated }: { onCreated: () => void }) {
             {t("unitCost")}
             <input name="unitCostMinor" type="number" min="1" step="1" required />
           </label>
-          <span />
+          <label className="field">
+            {t("p2LinkedCampaign")}
+            <select name="eventId">
+              <option value="">{t("p2NoLinkedCampaign")}</option>
+              {events.data?.events
+                .filter((e) => ["DRAFT", "PENDING_REVIEW", "ACTIVE", "SCHEDULED"].includes(e.state))
+                .map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.title}
+                  </option>
+                ))}
+            </select>
+          </label>
+          <label className="field">
+            {t("p2AllowedCountries")}
+            <input name="allowedCountries" placeholder="FR, DE" maxLength={200} />
+          </label>
+          <label className="field">
+            {t("p2Categories")}
+            <input name="creatorCategories" maxLength={300} />
+          </label>
+          <label className="field">
+            {t("p2MinimumFollowers")}
+            <input name="minimumCreatorFollowers" type="number" min="0" step="1" defaultValue="0" />
+          </label>
           <label className="field">
             {t("startDate")}
             <input name="startAt" type="datetime-local" required />
@@ -105,11 +142,12 @@ function CampaignCard({
   const action = useAction();
   const key = useRef<string | null>(null);
   const funded = BigInt(campaign.remainingMinor || 0) > 0n;
-  async function fund() {
+  async function fund(source: "DEVELOPMENT" | "AVAILABLE" = "DEVELOPMENT") {
     key.current ??= crypto.randomUUID();
     const result = await action.run(
       () =>
         api(`/campaigns/${campaign.id}/fund`, {
+          source,
           amountMinor: campaign.budgetMinor,
           idempotencyKey: key.current,
         }),
@@ -159,8 +197,21 @@ function CampaignCard({
       )}
       {["DRAFT", "REJECTED"].includes(campaign.state) && (
         <div className="form-actions">
+          {!funded && (
+            <button
+              className="button button-secondary"
+              onClick={() => fund("AVAILABLE")}
+              disabled={action.busy}
+            >
+              {t("p2FundMedia")}
+            </button>
+          )}
           {!funded && fundingEnabled && (
-            <button className="button button-secondary" onClick={fund} disabled={action.busy}>
+            <button
+              className="button button-secondary"
+              onClick={() => fund()}
+              disabled={action.busy}
+            >
               {t(action.busy ? "working" : "fundDemo")}
             </button>
           )}
@@ -219,6 +270,7 @@ export function AdvertiserScreen({
           icon={<Check />}
         />
       </div>
+      <AdvertiserAnalytics />
       {creating && (
         <CampaignForm
           onCreated={() => {
@@ -313,17 +365,48 @@ function Opportunity({ campaign }: { campaign: Campaign }) {
           {t(action.busy ? "working" : submitted ? "statusPENDING_VALIDATION" : "participate")}
         </button>
       </form>
+      {data?.user.roles.includes("CREATOR") && (
+        <TrackedShare surface="CAMPAIGN" targetId={campaign.id} />
+      )}
       {action.notice && <Notice message={action.notice} error={action.failed} />}
     </article>
   );
 }
-export function OpportunitiesScreen() {
+export function OpportunitiesScreen({ preferredCampaignId }: { preferredCampaignId?: string }) {
   const { t } = useLocale();
-  const result = useResource<{ campaigns: Campaign[] }>("/campaigns");
-  const eligible = result.data?.campaigns.filter((c) => c.canParticipate === true) || [];
+  const [objective, setObjective] = useState("");
+  const [category, setCategory] = useState("");
+  const result = useResource<{ campaigns: Campaign[] }>(
+    `/campaigns?objective=${encodeURIComponent(objective)}&category=${encodeURIComponent(category)}`,
+  );
+  const eligible =
+    result.data?.campaigns
+      .filter((c) => c.canParticipate === true)
+      .sort(
+        (a, b) => Number(b.id === preferredCampaignId) - Number(a.id === preferredCampaignId),
+      ) || [];
   return (
     <>
       <PageTitle title={t("opportunities")} description={t("activityDisclaimer")} />
+      <div className="panel discovery-filters">
+        <label className="field">
+          {t("p2FilterObjective")}
+          <select value={objective} onChange={(e) => setObjective(e.target.value)}>
+            <option value="">{t("p2All")}</option>
+            {(["CLICK", "QUALIFIED_VIEW", "CONVERSION", "SPONSORED_MISSION"] as const).map(
+              (type) => (
+                <option value={type} key={type}>
+                  {t(`objective${type}`)}
+                </option>
+              ),
+            )}
+          </select>
+        </label>
+        <label className="field">
+          {t("p2FilterCategory")}
+          <input value={category} onChange={(e) => setCategory(e.target.value)} maxLength={40} />
+        </label>
+      </div>
       {result.loading ? (
         <Loading />
       ) : result.error ? (

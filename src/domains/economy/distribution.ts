@@ -69,6 +69,16 @@ export interface DistributionParticipant {
   readonly unitIds: readonly string[];
 }
 export interface DistributionInput {
+  readonly eventPrizeExposure?: {
+    readonly obligationMinor: bigint;
+    readonly earmarkedAssetsMinor: bigint;
+    readonly unfundedLiabilityMinor: bigint;
+    readonly positions: readonly {
+      eventId: string;
+      obligationMinor: bigint;
+      fundedMinor: bigint;
+    }[];
+  };
   readonly periodId: string;
   readonly startAt: string;
   readonly endAt: string;

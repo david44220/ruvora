@@ -3,6 +3,7 @@ const isDevelopment = process.env.NODE_ENV !== "production";
 const config: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
+  outputFileTracingIncludes: { "/share-card/*/*": ["./public/assets/share/ruvora-orb-card.png"] },
   agentRules: false,
   devIndicators: false,
   images: { formats: ["image/avif", "image/webp"] },

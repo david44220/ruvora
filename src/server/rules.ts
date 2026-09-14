@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { RewardRule } from "../domains/economy/activity";
 import { DEVELOPMENT_REWARD_RULE } from "../domains/economy/activity";
+import { DEFAULT_ATTRIBUTION_POLICY } from "../domains/economy/attribution";
 import type { Tx } from "./db";
 import { jsonValue } from "./db";
 import { assert } from "./errors";
@@ -17,6 +18,35 @@ const rate = z
     eventPoints: z.number().int().min(0).max(10000),
   })
   .strict();
+export const attributionPolicySchema = z
+  .object({
+    version: z.string().min(3).max(80),
+    model: z.literal("FIRST_ELIGIBLE_CREATOR"),
+    windowSeconds: z.number().int().min(60).max(604800),
+    maxActivitiesPerContext: z.number().int().min(1).max(1000),
+    retentionDays: z.number().int().min(7).max(365),
+  })
+  .strict();
+export const referralPolicySchema = z
+  .object({
+    enabled: z.boolean(),
+    version: z.string().min(3).max(80),
+    rewardBps: bps,
+    maxRewardPerActivityMicros: minor,
+    maxRewardPerReferrerPeriodMicros: minor,
+    maxQualifyingRefereesPerPeriod: z.number().int().min(0).max(1000),
+    windowDays: z.number().int().min(1).max(30),
+  })
+  .strict();
+export const DEFAULT_REFERRAL_POLICY = {
+  enabled: false,
+  version: "referral-direct-v1",
+  rewardBps: 1000,
+  maxRewardPerActivityMicros: 100000n,
+  maxRewardPerReferrerPeriodMicros: 5000000n,
+  maxQualifyingRefereesPerPeriod: 25,
+  windowDays: 30,
+};
 export const rulesSchema = z
   .object({
     creatorFollowerThreshold: z.number().int().min(0).max(1000000),
@@ -82,6 +112,8 @@ export const rulesSchema = z
       })
       .partial()
       .strict(),
+    attribution: attributionPolicySchema.default(DEFAULT_ATTRIBUTION_POLICY),
+    referral: referralPolicySchema.default(DEFAULT_REFERRAL_POLICY),
   })
   .strict();
 export const DEVELOPMENT_RULES = {
@@ -103,6 +135,8 @@ export const DEVELOPMENT_RULES = {
     mode: "REDUCE",
   },
   liabilities: {},
+  attribution: DEFAULT_ATTRIBUTION_POLICY,
+  referral: { ...DEFAULT_REFERRAL_POLICY, enabled: true },
 };
 export async function activeRules(tx: Tx) {
   const record = await tx.economicRule.findFirst({
@@ -119,14 +153,14 @@ export async function activeRules(tx: Tx) {
   return { record, config, reward: config.reward as RewardRule };
 }
 export async function createRules(tx: Tx, actorId: string, input: unknown) {
-  const schema = z
+  const parsed = z
     .object({
       version: z.string().min(3).max(80),
       config: rulesSchema,
       reason: z.string().trim().min(10).max(500),
     })
-    .strict();
-  const parsed = schema.parse(input);
+    .strict()
+    .parse(input);
   await tx.economicRule.updateMany({ where: { active: true }, data: { active: false } });
   const record = await tx.economicRule.create({
     data: { version: parsed.version, config: jsonValue(parsed.config) },

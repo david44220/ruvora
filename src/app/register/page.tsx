@@ -8,5 +8,5 @@ export default async function Register({
   const p = await searchParams;
   const role: Role =
     p.role === "CREATOR" ? "CREATOR" : p.role === "ADVERTISER" ? "ADVERTISER" : "USER";
-  return <AuthPage mode="register" initialRole={role} referral={p.ref} />;
+  return <AuthPage mode="register" initialRole={role} />;
 }

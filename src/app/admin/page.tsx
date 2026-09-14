@@ -9,7 +9,10 @@ export default async function Admin() {
   if (!user) redirect("/login");
   if (!user.roles.includes("ADMIN")) redirect("/app");
   return (
-    <AppShell user={publicUser(user) as User} development={process.env.APP_ENV !== "production"}>
+    <AppShell
+      user={JSON.parse(JSON.stringify(publicUser(user))) as User}
+      development={process.env.APP_ENV !== "production"}
+    >
       <AdminScreen />
     </AppShell>
   );

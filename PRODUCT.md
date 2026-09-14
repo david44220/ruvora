@@ -49,3 +49,11 @@ The built-in image generation tool supplied the actual assets; its interface did
 Track legitimate activation, profile sharing, creator retention, validated advertiser outcomes, event participation, invalid-traffic rates, support burden and retained operating profit. Financial targets belong in configurable internal reporting, never public earning promises or hard-coded payout rules.
 
 The product must remain an independent creator platform. Avoid paid-click framing, gambling, speculative currency language, uncontrolled referral compensation, fake analytics and artificial social verification.
+
+## Pass 02 implemented loops
+
+Ruvora Links now place eligible funded opportunities alongside ordered public links, socials, event and referral modules. Trusted visits can bind to one authenticated account and generate creator credit only after legitimate independent activity validation. Creator/advertiser/growth screens show persisted activity and ledger aggregates. Registration and sharing alone carry no monetary value.
+
+Advertisers reserve media funds and event prize funds in separate ledger accounts. Event creation includes EN/FR rules, dates, country/cap/point limits and rank shares. An independent administrator approves the submitted configuration; completion freezes eligible rankings, and a second administrator approves deterministic prize settlement. The wallet displays allocated internal ledger money separately from RU, XP and Event Points. External payout delivery remains unavailable.
+
+Pass 03 priorities are reviewed live provider integrations/reconciliation, operational controls and retention, expanded approval enforcement, verified audience evidence, delegated hosting and deeper analytics. No feature threshold promises income or certifies regional legality.

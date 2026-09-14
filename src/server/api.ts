@@ -15,7 +15,7 @@ import {
   requireUser,
   SESSION_COOKIE,
 } from "./auth";
-import { getPublicProfile, saveProfile } from "./profiles";
+import { getPublicProfile, saveProfile, saveProfileModules } from "./profiles";
 import {
   createCampaign,
   fundCampaign,
@@ -24,10 +24,55 @@ import {
   submitCampaign,
 } from "./campaigns";
 import { reviewActivity, reverseActivity, submitActivity } from "./activities";
-import { getEvent, joinEvent, listEvents } from "./events";
+import {
+  getEvent,
+  joinEvent,
+  listEvents,
+  listManagedEvents,
+  createEvent,
+  reviewEvent,
+  transitionEvent,
+  fundEventPrize,
+  disqualifyEventParticipant,
+} from "./events";
 import { commitDistribution, createDistributionPreview } from "./distributions";
 import { getAdmin, getDashboard, setAccountHold, updateEconomicRules } from "./views";
-async function readJson(request: Request): Promise<unknown> {
+import { z } from "zod";
+import {
+  ATTRIBUTION_COOKIE,
+  VISITOR_COOKIE,
+  startAttribution,
+  bindAttribution,
+  createShareLink,
+} from "./attribution";
+import { getCreatorAnalytics, getAdvertiserAnalytics, getGrowthAnalytics } from "./analytics";
+import { createEventSettlementPreview, finalizeEventSettlement } from "./event-settlement";
+import {
+  beginMfaEnrollment,
+  confirmMfaEnrollment,
+  stepUp,
+  recoverMfa,
+  securityStatus,
+  revokeSessions,
+  requireFreshMfa,
+} from "./security/mfa";
+import {
+  requestEmailVerification,
+  requestPasswordReset,
+  redeemEmailVerification,
+  redeemPasswordReset,
+  developmentMailbox,
+} from "./security/email";
+import { requestApproval, reviewApproval, listApprovals } from "./security/approvals";
+import {
+  depositAdvertiserBalance,
+  refundAdvertiserDeposit,
+  paymentSummary,
+} from "./providers/payments";
+import { listWebhookEvents, retryWebhook } from "./webhooks";
+import { isDevelopment, validateRuntimeEnvironment } from "./environment";
+import { safeReturnTo } from "../lib/navigation";
+export async function readJson(request: Request): Promise<unknown> {
   assert(
     request.headers.get("content-type")?.split(";")[0] === "application/json",
     "JSON_REQUIRED",
@@ -55,7 +100,7 @@ async function readJson(request: Request): Promise<unknown> {
     throw new AppError("INVALID_JSON", "Request body is not valid JSON.");
   }
 }
-function response(value: unknown, requestId: string, status = 200) {
+export function response(value: unknown, requestId: string, status = 200) {
   return new NextResponse(
     JSON.stringify(value, (_, item) => (typeof item === "bigint" ? item.toString() : item)),
     {
@@ -71,12 +116,18 @@ function response(value: unknown, requestId: string, status = 200) {
 export async function handleApi(request: NextRequest, path: string[]) {
   const requestId = randomUUID();
   const route = path.join("/");
+  const tokens = {
+    attributionToken: request.cookies.get(ATTRIBUTION_COOKIE)?.value,
+    visitorToken: request.cookies.get(VISITOR_COOKIE)?.value,
+  };
+  const sessionToken = request.cookies.get(SESSION_COOKIE)?.value;
   try {
+    if (route !== "health") validateRuntimeEnvironment();
     if (request.method === "GET") {
       if (route === "health") return response({ status: "ok", service: "ruvora" }, requestId);
       if (route === "ready") {
         await db.$queryRaw`SELECT 1`;
-        if (process.env.NODE_ENV === "production")
+        if (!isDevelopment())
           assert(
             (await db.ledgerTransaction.count({ where: { isDemo: true } })) === 0 &&
               (await db.user.count({ where: { isDemo: true } })) === 0,
@@ -97,11 +148,44 @@ export async function handleApi(request: NextRequest, path: string[]) {
       }
       if (path[0] === "profiles" && path.length === 2)
         return response(await getPublicProfile(path[1]!), requestId);
+      if (route === "payments/account") {
+        const data = await paymentSummary(await requireUser());
+        return response({ ...data, development: data.developmentFundingAvailable }, requestId);
+      }
+      if (route === "admin/webhooks")
+        return response(await listWebhookEvents(await requireUser()), requestId);
+      if (route === "events/manage")
+        return response(await listManagedEvents(await requireUser()), requestId);
+      if (route === "security")
+        return response(
+          {
+            ...(await securityStatus(await requireUser(), sessionToken)),
+            development: isDevelopment(),
+          },
+          requestId,
+        );
+      if (route === "security/mailbox")
+        return response(await developmentMailbox(await requireUser()), requestId);
+      if (route === "admin/approvals")
+        return response(await listApprovals(await requireUser()), requestId);
+      if (route === "analytics/creator")
+        return response(await getCreatorAnalytics(await requireUser()), requestId);
+      if (route === "analytics/advertiser")
+        return response(await getAdvertiserAnalytics(await requireUser()), requestId);
+      if (route === "admin/growth")
+        return response(await getGrowthAnalytics(await requireUser()), requestId);
       if (route === "events") return response(await listEvents(), requestId);
       if (path[0] === "events" && path.length === 2)
         return response(await getEvent(path[1]!, await getCurrentUser()), requestId);
       if (route === "campaigns")
-        return response(await listCampaigns(await getCurrentUser()), requestId);
+        return response(
+          await listCampaigns(await getCurrentUser(), {
+            forCreator: request.nextUrl.searchParams.get("forCreator") === "true",
+            objective: request.nextUrl.searchParams.get("objective") || undefined,
+            category: request.nextUrl.searchParams.get("category") || undefined,
+          }),
+          requestId,
+        );
       if (route === "dashboard")
         return response(await getDashboard(await requireUser()), requestId);
       if (route === "admin") return response(await getAdmin(await requireUser()), requestId);
@@ -109,20 +193,59 @@ export async function handleApi(request: NextRequest, path: string[]) {
     if (request.method === "POST") {
       assertOrigin(request);
       const input = await readJson(request);
+      if (route === "attribution/start") {
+        const { slug } = z
+          .object({ slug: z.string().min(12).max(64) })
+          .strict()
+          .parse(input);
+        const started = await startAttribution(slug, tokens, await getCurrentUser());
+        const output = response({ ok: true, redirectTo: started.redirectTo }, requestId);
+        for (const [name, value] of [
+          [ATTRIBUTION_COOKIE, started.attributionToken],
+          [VISITOR_COOKIE, started.visitorToken],
+        ])
+          output.cookies.set(name!, value!, {
+            httpOnly: true,
+            secure: !isDevelopment(),
+            sameSite: "lax",
+            path: "/",
+            expires: started.expiresAt,
+          });
+        return output;
+      }
+      if (route === "security/password/request")
+        return response(await requestPasswordReset(input), requestId);
+      if (route === "security/password/reset")
+        return response(await redeemPasswordReset(input), requestId);
+      if (route === "security/email/redeem")
+        return response(await redeemEmailVerification(input), requestId);
       if (route === "auth/register" || route === "auth/login") {
         const result = await (route === "auth/register" ? register(input) : login(input));
         const output = response(
-          { user: result.user },
+          {
+            user: result.user,
+            returnTo: safeReturnTo(request.cookies.get("ruvora_return")?.value),
+          },
           requestId,
           route === "auth/register" ? 201 : 200,
         );
         output.cookies.set(SESSION_COOKIE, result.session.token, {
           httpOnly: true,
-          secure: process.env.NODE_ENV === "production",
+          secure: !isDevelopment(),
           sameSite: "lax",
           path: "/",
           expires: result.session.expiresAt,
         });
+        const registered = route === "auth/register";
+        const fresh = await db.user.findUniqueOrThrow({ where: { id: result.user.id } });
+        try {
+          await bindAttribution(fresh, tokens, { registration: registered });
+        } catch (error) {
+          if (!(error instanceof AppError)) throw error;
+          output.cookies.delete(ATTRIBUTION_COOKIE);
+          output.cookies.delete(VISITOR_COOKIE);
+          if (registered) await bindAttribution(fresh, undefined, { registration: true });
+        }
         return output;
       }
       if (route === "auth/logout") {
@@ -130,7 +253,7 @@ export async function handleApi(request: NextRequest, path: string[]) {
         const output = response({ ok: true }, requestId);
         output.cookies.set(SESSION_COOKIE, "", {
           httpOnly: true,
-          secure: process.env.NODE_ENV === "production",
+          secure: !isDevelopment(),
           sameSite: "lax",
           path: "/",
           maxAge: 0,
@@ -138,6 +261,61 @@ export async function handleApi(request: NextRequest, path: string[]) {
         return output;
       }
       const user = await requireUser();
+      if (route === "payments/deposit")
+        return response(await depositAdvertiserBalance(user, input), requestId);
+      if (route === "payments/refund")
+        return response(await refundAdvertiserDeposit(user, input), requestId);
+      if (path[0] === "admin" && path[1] === "webhooks" && path.length === 4 && path[3] === "retry")
+        return response(await retryWebhook(user, sessionToken, path[2]!, input), requestId);
+      if (route === "shares") return response(await createShareLink(user, input), requestId, 201);
+      if (route === "profile/modules")
+        return response(await saveProfileModules(user, input), requestId);
+      if (route === "security/email/request")
+        return response(await requestEmailVerification(user), requestId);
+      if (route === "security/mfa/begin")
+        return response(await beginMfaEnrollment(user, sessionToken, input), requestId);
+      if (route === "security/mfa/confirm")
+        return response(await confirmMfaEnrollment(user, sessionToken, input), requestId);
+      if (route === "security/mfa/step-up")
+        return response(await stepUp(user, sessionToken, input), requestId);
+      if (route === "security/mfa/recover")
+        return response(await recoverMfa(user, sessionToken, input), requestId);
+      if (route === "security/sessions/revoke")
+        return response(await revokeSessions(user, sessionToken, input), requestId);
+      if (route === "admin/approvals")
+        return response(await requestApproval(user, sessionToken, input), requestId, 201);
+      if (
+        path[0] === "admin" &&
+        path[1] === "approvals" &&
+        path.length === 4 &&
+        path[3] === "review"
+      )
+        return response(await reviewApproval(user, sessionToken, path[2]!, input), requestId);
+      if (route === "events") return response(await createEvent(user, input), requestId, 201);
+      if (path[0] === "events" && path.length === 3 && path[2] === "fund")
+        return response(await fundEventPrize(user, path[1]!, input), requestId);
+      if (path[0] === "events" && path.length === 3 && path[2] === "transition")
+        return response(await transitionEvent(user, path[1]!, input), requestId);
+      if (path[0] === "admin" && path[1] === "events" && path.length === 4) {
+        const id = path[2]!;
+        if (path[3] === "review") return response(await reviewEvent(user, id, input), requestId);
+        if (path[3] === "preview")
+          return response(await createEventSettlementPreview(user, id), requestId);
+        if (path[3] === "settle") {
+          await requireFreshMfa(user, sessionToken);
+          return response(await finalizeEventSettlement(user, id, input), requestId);
+        }
+        if (path[3] === "disqualify") {
+          await requireFreshMfa(user, sessionToken);
+          return response(await disqualifyEventParticipant(user, id, input), requestId);
+        }
+      }
+      if (
+        route === "admin/rules" ||
+        route === "admin/distributions/finalize" ||
+        (path[0] === "admin" && ["reverse", "hold"].includes(path.at(-1) || ""))
+      )
+        await requireFreshMfa(user, sessionToken);
       if (route === "profile") return response(await saveProfile(user, input), requestId);
       if (route === "campaigns") return response(await createCampaign(user, input), requestId, 201);
       if (path[0] === "campaigns" && path.length === 3 && path[2] === "fund")
@@ -145,9 +323,9 @@ export async function handleApi(request: NextRequest, path: string[]) {
       if (path[0] === "campaigns" && path.length === 3 && path[2] === "submit")
         return response(await submitCampaign(user, path[1]!), requestId);
       if (route === "activities")
-        return response(await submitActivity(user, input), requestId, 201);
+        return response(await submitActivity(user, input, tokens), requestId, 201);
       if (path[0] === "events" && path.length === 3 && path[2] === "join")
-        return response(await joinEvent(user, path[1]!), requestId);
+        return response(await joinEvent(user, path[1]!, tokens), requestId);
       if (
         path[0] === "admin" &&
         path[1] === "campaigns" &&

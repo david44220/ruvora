@@ -22,7 +22,10 @@
     "db:local": "node scripts/local-postgres.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "admin:bootstrap": "tsx scripts/bootstrap-admin.ts"
+    "admin:bootstrap": "tsx scripts/bootstrap-admin.ts",
+    "worker:once": "tsx scripts/process-outboxes.ts",
+    "dev:configure": "node scripts/configure-development.mjs",
+    "mail:inspect": "tsx scripts/inspect-dev-mail.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "7.10.0",

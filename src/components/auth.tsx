@@ -35,11 +35,12 @@ export function AuthPage({
             displayName: values.get("displayName"),
             role,
             locale,
-            ...(referral ? { referralHandle: referral } : {}),
           };
-    const result = await action.run(() => api<{ user: User }>(`/auth/${mode}`, body));
+    const result = await action.run(() =>
+      api<{ user: User; returnTo: string }>(`/auth/${mode}`, body),
+    );
     if (result) {
-      router.push(result.user.onboarded ? "/app" : "/onboarding");
+      router.push(result.user.onboarded ? result.returnTo : "/onboarding");
       router.refresh();
     }
   }
@@ -133,6 +134,11 @@ export function AuthPage({
               </p>
             )}
           </form>
+          {mode === "login" && (
+            <Link className="text-link" href="/forgot-password">
+              {t("p2ForgotPassword")}
+            </Link>
+          )}
           <div className="form-footer">
             {t(mode === "login" ? "accountNew" : "accountAlready")}
             <Link href={mode === "login" ? "/register" : "/login"}>
@@ -144,7 +150,7 @@ export function AuthPage({
     </main>
   );
 }
-export function OnboardingPage() {
+export function OnboardingPage({ returnTo = "/app" }: { returnTo?: string }) {
   const { t } = useLocale();
   const router = useRouter();
   const resource = useResource<{ user: User | null }>("/session");
@@ -174,7 +180,7 @@ export function OnboardingPage() {
           <ProfileForm
             user={resource.data.user}
             onSaved={() => {
-              router.push("/app");
+              router.push(returnTo);
               router.refresh();
             }}
           />

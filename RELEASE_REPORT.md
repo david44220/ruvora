@@ -1,170 +1,224 @@
-# Ruvora 0.1.0 — release report
+# Ruvora — Pass 02 release report
 
-Recorded 2026-09-13. This is the implemented P0 foundation, with development fixtures and explicit launch gates. It is not a claim that the entire master brief, production money operations, or public deployment is complete.
+Pass 02 continues the existing foundation at `cbd762ab274385e6d3e0e129672a22932a5f1c19`. Evidence recorded on 14 September 2026. Local aggregate validation is complete; GitHub publication evidence is recorded below; no live provider or Abacus deployment is claimed.
 
-## 1. What was implemented
+## 1. Repository state before Pass 02
 
-A persistent application spanning account creation and onboarding, multi-role workspaces, editable public creator profiles, advertiser campaigns, independent activity review, events, separate XP/Event Points/Reward Units, immutable accounting and configurable distribution. Includes bilingual interfaces, generated canonical artwork, development data, tests, CI and operational documentation.
+Canonical repository: [david44220/ruvora](https://github.com/david44220/ruvora), private. Pass 01 contains the application, canonical artwork, three migrations, CI, 111 unit tests, 14 database tests and 16 browser tests. Its implementation remains in `feature/ruvora-foundation`, with [draft PR 1](https://github.com/david44220/ruvora/pull/1) targeting `develop`. The neutral baseline remains on `main` and `develop` pending review. Historical evidence is preserved in [the Pass 01 report](docs/releases/PASS01_RELEASE_REPORT.md).
 
-## 2. Architecture
+## 2. What was changed
 
-A modular monolith: Next.js pages and client components call thin API handlers; server application services authorize requests and coordinate PostgreSQL transactions; pure economy and policy modules define deterministic rules. Sensitive state is never authorized by client rendering. Domain boundaries and extraction criteria are in ARCHITECTURE.md.
+Added trusted attribution, direct referral credits, actual creator/advertiser/growth analytics, editable public modules, sponsored event creation and funded prize settlement, MFA/recovery, encrypted mail, approval foundations, signed durable callbacks and development payment adapters. Preserved the modular monolith, exact ledger, separate RU/XP/Event Points, canonical visuals, EN/FR and all original test scenarios. Four forward migrations extend the existing database.
 
-## 3. Stack
+## 3. Attribution Engine implementation
 
-Node.js 24.18.0 locally, pnpm 11.19.0, Next.js 16.3.5, React 19.3.0, TypeScript 5.9.3, Tailwind CSS 4.3.3, Prisma/client/adapter 7.10.0, PostgreSQL 18.4 locally, Zod, Vitest 5.0.0 and Playwright 1.63.0. Resolved packages are locked in pnpm-lock.yaml. Linux production is packaged as a standalone Node application.
+`ShareLink`, `AttributionContext` and `GrowthEvent` establish server-owned entry destinations and opaque random visitor/context credentials. The browser receives HttpOnly cookies; the database stores digests, immutable origin fields and a versioned policy snapshot. Registration/login binds a context to one account. `/go/[slug]` maps only server-known destinations and retains a bounded internal return path through onboarding.
 
-## 4. Database
+## 4. Attribution security model
 
-18 Prisma models and three committed PostgreSQL migrations cover identity, sessions, profiles, rules, campaigns, activities, provenance, accounting, events, referrals and auditing. Unique constraints, foreign keys, indexed access paths and database triggers reinforce service checks. Clean test database migration and development seeding were executed. The seed is repeatable and does not overwrite existing profile edits/passwords. No production migration or restore drill was executed.
+No participant-supplied creator handle authorizes creator RU. Strict activity schemas reject forged fields; submission resolves the trusted cookies and snapshots provenance. Checks cover tampering, unknown/expired/revoked contexts, cross-account binding, self-attribution, advertiser conflicts, campaign/event mismatch, usage caps and current eligibility. The first eligible creator and original window remain fixed. An anonymous same-creator explicit referral click may append a new immutable referral origin without extending the window; bound or competing origins cannot be overwritten. No device fingerprinting, cross-site tracking or IP collection was introduced. Expected share-link errors have localized recovery; account switching clears only share credentials and requires an explicit validated retry. Authenticated referral visitors continue to their dashboard.
 
-## 5. Authentication
+## 5. Creator Monetization Loop
 
-Salted scrypt passwords, random opaque sessions stored as hashes, HttpOnly cookies, expiry/revocation, suspended-account rejection, persistent authentication rate limits and same-origin mutation checks. Public registration allows ordinary roles but never ADMIN. Secure host-prefixed production cookies and explicit first-admin bootstrap are implemented. Production rejects demo identities. Email verification delivery, password recovery and administrator MFA remain incomplete.
+The browser journey verifies public profile → opaque attribution cookies → featured funded opportunity → registration/onboarding → pending activity with zero RU → independent admin validation → actual creator RU and analytics. Periodic revenue allocation remains governed by the existing exact distribution engine; RU is never a guaranteed cash amount.
 
-## 6. User experience
+**Creator acceptance: YES within the verified internal application boundary.** The real browser journey and database forgery tests establish server-controlled attribution and valid creator economic credit. External traffic authenticity and social-provider identity are not claimed.
 
-Registration, locale selection, onboarding, account settings, dashboard, opportunities, pending activity submission, event joining, activity history and separate balance/progression summaries are connected to real local persistence. Pending activity grants no rewards. Empty, loading, error, eligibility and development states are visible.
+## 6. Ruvora Link changes
 
-## 7. Creator experience
+Profiles now show up to three eligible funded opportunities, tracked event/invitation links and canonical share cards. Owners can reorder/show/hide five modules independently of existing socials/custom links. Bio-only editing preserves the original links. Public events are filtered by visibility/environment and projected through a whitelist; private review snapshots and administrative IDs are excluded. User-authored names, bios and URLs remain unchanged by localization.
 
-An account can add the creator role, declare its audience, edit its identity/bio/category, maintain multiple social profiles and custom links, publish a Ruvora Link and inspect actual creator activity. The configurable initial audience threshold is 10 followers. Self-declared counts are labelled; no external audience verification or income guarantee is implied.
+## 7. Creator RU changes
 
-## 8. Advertiser experience
+Creator credit resolves immutable server attribution and the activity’s rule snapshot, then rechecks creator/campaign eligibility at validation. Pending estimates are visibly separate from validated RU. Legacy finalized records remain intact; an untrusted legacy creator claim cannot mint new creator RU. Revoked contexts, disallowed regions/categories/audience thresholds and self-benefit paths fail closed.
 
-Advertisers create campaign drafts, specify objective, destination, schedule and budget, simulate funding in development, submit for independent approval and inspect validated delivery. Ownership, dates, available budget, daily caps and permitted state transitions are checked on the server. The deposit UI is explicitly a development fixture, not a real payment integration.
+## 8. Advertiser RU hardening
 
-## 9. Ruvora Link
+Deposits, media reservations and prize funding grant no RU. Advertiser RU follows independently validated billable delivery and real campaign escrow consumption. Provider conversion evidence is correlated with the actual activity/campaign and cannot substitute for arbitrary client validation. Rejection/reversal and independent-review conflict checks remain transactional.
 
-Public `/@handle` pages use persisted creator data, multi-link editing, social destinations, event participation links, referral attribution entry, native share/clipboard behavior and server-generated canonical/OG metadata. Encoded `@` route handling was fixed against the installed Next version. A browser regression verifies that saving a bio preserves all existing link rows. Avatar uploads, theme editing and individualized rendered social cards remain future work.
+## 9. Referral Engine
 
-## 10. Advertising Engine
+Direct referrals use a trusted origin, versioned eligibility/window, one inviter relationship and bounded per-action/per-referral/period credits. Signup alone creates no RU or money. Duplicate actions, loops, existing/bound accounts, self/referrer-advertiser conflicts and revoked origins are tested. A new explicit development rule version enables referrals; existing historical rule JSON is not rewritten.
 
-Campaign lifecycle, review, participation, manual evidence submission, validation, billable delivery, caps and reversal are implemented. Rules and advertiser RU coefficients are versioned. Production conversion/provider verification, invalid-traffic detection and live funding are not connected.
+## 10. Viral/share infrastructure
 
-## 11. Validated Activity
+Profile, campaign, event and referral links resolve to server-owned entries. Native share and clipboard controls expose a reusable URL. Dynamic profile/event/earned-milestone images use bounded escaped public text and canonical artwork. Milestone images require actual XP; no invented achievement or monetary reward is displayed. Acquisition/share counters derive from persisted deduplicated events.
 
-Submission creates a pending record. An independent administrator reviews evidence and approves or rejects. Validation atomically charges available campaign funds and creates the corresponding RU, XP and eligible Event Points. Self-benefiting reviewers are rejected. Conversion approval requires explicit evidence verification. Idempotency, serializable retries and uniqueness prevent repeated charges/awards; reversal uses compensating history and refuses silent changes to finalized distributions.
+## 11. Event creation
 
-## 12. Reward Unit Engine
+Creators can host zero-prize events; advertisers can create sponsored prize events. Creation includes EN/FR authored content/rules, start/end dates, visibility, countries, participant and daily point caps, versioned point rules, milestone labels and rank-share tiers. Configuration locks after submission. Owner/host/sponsor relationships derive from the authenticated actor; delegated cross-account hosting is not implemented.
 
-Exact bigint micro-units, separate USER/CREATOR/ADVERTISER categories, provenance, rule versions, eligibility and explicit lifecycle are implemented. Pending activity creates zero final RU. Distributions consume eligible units once. RU are neither spendable cash nor transferable tokens. Post-finalization recovery and comprehensive held-RU operations remain launch work.
+## 12. Sponsored Events
 
-## 13. Advertiser RU
+Sponsored activation requires independently approved linked media, approved immutable event configuration and a fully funded prize reserve. Media dates stay within the event window. Owner lifecycle actions support submit, activate, pause, complete and cancel with reasons and idempotent operation records. Owners/sponsors/hosts cannot win their own event. Monetary prizes are visibly separate from media spend and ordinary distribution.
 
-Advertiser RU follow independently validated, billable delivery, using a versioned coefficient. Depositing money or funding a campaign creates zero RU. Unit, integration and browser evidence verify this separation.
+## 13. Event Prize Pool accounting
 
-## 14. Event Engine
+Advertiser available funds, campaign escrow and `EVENT_PRIZE` reserves are distinct ledger account kinds. Prize funding transfers available funds into the event reserve. Cancellation returns the unused reserve to its original sponsor. Money is exact integer cents, journals balance, negative protected balances are rejected, and deposits/reservations create no RU. The displayed prize reserve comes from ledger entries, not an editable UI balance.
 
-Persisted events include schedules, membership, associated campaigns, points and deterministic rankings. Public event pages provide share metadata, dates, participant count, personal points, a leaderboard, participation entry and rules. Entry is free in the development event. Event creation tooling, sponsor operations, prize settlement and a full event lifecycle console remain incomplete.
+## 14. Event settlement
 
-## 15. Event Points
+Completion after the original end time and resolution of pending activity permit a preview that freezes points/ranking. Settlement recomputes a deterministic canonical fingerprint, requires fresh admin MFA plus a second administrator’s matching approval, and atomically posts winners’ `USER_PAYABLE` credits and unused sponsor funds. Final ranking and journal history are immutable; exact replay returns the existing result.
 
-Event Points are earned from eligible validated activity while the participant is a member of an active event. They are separate from XP, RU and money. Reversals append negative entries. Ranking sorts points descending, earliest attainment and finally stable identity. Event scores do not constitute a payout obligation.
+**Event acceptance: YES for internal ledger settlement.** The sponsored browser journey reserved €10.01, awarded €6.01 once, returned €4.00, left the reserve at €0.00 and displayed the frozen rank and wallet credit. No external bank payout occurred.
 
-## 16. Ledger
+## 15. Leaderboard integrity
 
-Integer minor-unit, single-currency balanced transactions and immutable entries represent campaign funds, recognized revenue, pool funding and participant liabilities. Database constraints reject unbalanced/negative protected accounts, economic-history mutation and adding postings to closed transactions. No authoritative monetary balance is directly edited. Reconciliation and operational recovery still require production exercises.
+Rankings derive from validated Event Point entries, with exact compensating reversals and stable tie-breaking. Participant eligibility, holds and disqualification affect the preview; stale inputs invalidate finalization. Database guards freeze points, memberships and source activity after settlement begins. Final public standings use the immutable settlement snapshot and expose the authenticated participant’s prize allocation separately.
 
-## 17. Global Distribution Pool
+## 16. Event fraud controls
 
-An administrator previews a closed period using a persisted rule snapshot, financial inputs and a fingerprint. Eligible allocations use deterministic largest-remainder rounding. Finalization rejects stale rules, changed eligibility and overlapping finalized periods, atomically funds the pool, posts participant liabilities and consumes eligible RU. Finalized snapshots cannot be rewritten. Production distribution rejects contaminated demo history. This is an internal accounting flow, not bank payout.
+Server checks enforce country/cap/date/point limits, active membership, independent media/event review, funded reserves and no owner/sponsor/host self-participation. Reviewers and approvers cannot be prize beneficiaries. Pending activity blocks the freeze. Disqualification and holds are audited. Post-final recovery requires a separate reviewed compensation; this pass does not silently rewrite winners or implement automated post-final clawback.
 
-## 18. Margin Governor
+## 17. Financial/ledger changes
 
-The configurable governor accounts for declared costs, liabilities, reserves, retained revenue and operating profit targets before releasing a distributable pool. Category shares and thresholds are versioned, with an explanation available in the admin preview. An unknown business target is configurable; a permanent EUR 500 target was not invented. Correctness depends on complete operator-supplied costs/liabilities until real provider reconciliation exists.
+All new monetary paths use the existing immutable balanced ledger and serializable transaction boundary. Raw SQL guards reconcile prize counterparties and enforce final-history freezes. PostgreSQL serialization retries handle both Prisma P2034 and pg-adapter P2010 SQLSTATE 40001/40P01. Payment retries add bounded jitter under contention. Campaign funding binds both development and available-funds sources to the same request identity while preserving legacy deposit replay.
 
-## 19. Trust and Safety
+## 18. Margin Governor changes
 
-Server-side roles, ownership, independent reviews, country/age/hold policy gates, rate limits, validation provenance, audit trails, explicit demo isolation, same-origin checks and security headers are implemented. Social verification, mature fraud operations, appeals, privacy retention/deletion/export, production legal policy and external security assessment remain launch gates. Draft informational privacy/terms screens are not approved launch policies.
+Distribution snapshots include actual event prize exposure. Separately reserved prize assets back their own liabilities; only uncovered event liability reduces available operating capacity, avoiding double subtraction from already-net campaign revenue. Configured provider/tax/refund/chargeback/fraud/infrastructure/operating liabilities and retained-profit constraints continue to apply. No new universal RU price or guaranteed payout was introduced.
 
-## 20. Admin
+## 19. External provider architecture
 
-Protected administration supports campaign approval, activity evidence review/rejection/reversal, economic holds, versioned rule editing, distribution preview/finalization and audit inspection. Reviewer reasons are captured. First-admin creation is a separate explicit bootstrap script. Operator MFA, recovery, two-person settlement approval and richer monitoring are not complete.
+Payment ports define deposit/refund/chargeback/payout contracts. The development adapter writes visibly simulated ledger-backed available funds and bounded corrections; payouts and real payment delivery are unavailable. Email ports consume encrypted outbox template/locale/variables. Conversion callbacks store verified/rejected/reversed evidence and risk records; independent human review remains the financial decision. See [PROVIDERS.md](PROVIDERS.md).
 
-## 21. Internationalization
+## 20. Webhooks
 
-Central typed EN/FR dictionaries, localized API errors, number/date formatting and a persisted locale cookie cover core surfaces. User-authored content is preserved. Browser tests verify French dashboard/login behavior and persistence across reload/logout/login; unit tests verify key and interpolation parity. Professional translation review and browser-language negotiation remain follow-up work.
+`POST /api/webhooks/[provider]` preserves raw bytes, limits bodies to 32 KB, and verifies an HMAC over provider, timestamp and body with a five-minute tolerance. Immutable provider/event IDs and payload hashes detect exact duplicates and changed-payload replays. Durable inbox consumers use leases, bounded exponential retries and dead-letter states. Audited retry requires fresh admin MFA. See [WEBHOOKS.md](WEBHOOKS.md).
 
-## 22. Visual system
+## 21. Email/security changes
 
-Warm obsidian, ivory, champagne and copper combine editorial typography with bespoke illuminated glass/ribbon artwork. Shared navigation, profiles, event art, workspaces, cards, state treatments and responsive layout retain the same visual family. Motion is restrained and reduced-motion preferences are respected. No heavy WebGL scene is required.
+Verification/reset tokens are purpose-bound digests with expiry and single-use atomic redemption. Reset invalidates all sessions; issuance responses avoid account enumeration. The encrypted outbox records verification, reset, password-change and MFA-change notifications. A private account mailbox and explicitly gated local inspection CLI support development; messages are not sent externally. The worker validates environment safety before queue mutations and emits bounded operation summaries without private payloads. An actual local batch processed 13 development mail records successfully. Recovery URLs use fragments and are removed after client capture.
 
-## 23. GPT Image 2.5 assets generated
+## 22. MFA/admin hardening
 
-Three raster originals were actually generated using the available built-in image generation tool. That tool did not expose a model selector or verifiable model-version metadata. Therefore GPT Image 2.5 provenance is **unverified**, and this requirement cannot honestly be marked satisfied at that exact model version. Prompts and provenance are preserved in docs/ARTWORK-PROVENANCE.md. Original outputs were 1672×941 for the flagship/event and 1254×1254 for the orb; native 4K generation was not achieved.
+TOTP credentials are authenticated-encrypted and protected by a globally monotonic accepted counter. Enrollment, password/code step-up, one-use recovery codes, session revocation and login/security auditing are implemented. Distribution finalization, event settlement, rule changes, financial reversal and high-risk holds require recent password plus MFA at the HTTP boundary. Both demo admins have distinct derived authenticators; passwords alone do not grant elevated sessions.
 
-## 24. Canonical Ruvora assets
+## 23. Approval workflow
 
-PNG masters under assets/masters preserve the flagship, orb and event originals. Optimized WebP exports, responsive variants and a 1200×630 share crop are under public/assets. The manifest and repeatable optimization script document every export. Main WebP files are approximately 186 KB, 302 KB and 166 KB respectively; no upscaling is presented as native resolution. These canonical assets are reused across actual UI surfaces.
+Requests bind requester, operation, target, canonical payload hash, version, reason and expiry. A different eligible administrator approves/rejects; execution consumes the approval in the same transaction. States include requested, approved, rejected, executed and expired. Event settlement fully enforces this workflow. Other high-impact operation types have the model/validation foundation and fresh-MFA gates; broad dual-approval enforcement and monetary thresholds remain Pass 03 work.
 
-## 25. Responsive validation
+## 24. Creator analytics
 
-Chromium automatically checked homepage and public profile at 360, 430, 768, 1024, 1440 and 1920 pixels, including image loading and document/body overflow. An additional event check covers 390 pixels. Desktop/mobile screenshots cover the principal public and role-based surfaces; representative images are committed under docs/qa. A real overflowing decorative element was fixed. No physical phone, Safari, Firefox or 4K-monitor test is claimed.
+Actual profile views, attributed sessions, registrations, opportunity starts, validation/conversion/rejection counts, pending creator estimates, validated creator RU, event joins/referrals, campaign performance and ledger allocations are available. The chart/funnel uses persisted records. Legacy seeded activity may predate acquisition telemetry; no historic visit counts are invented to make funnels appear complete.
 
-## 26. Accessibility work
+## 25. Advertiser analytics
 
-Semantic sections, labelled form controls, keyboard-operable controls, visible focus, meaningful link labels, decorative image alternatives, skip navigation, responsive readability and reduced-motion styling are present. Dynamic errors and progress states are visible. No automated axe report, assistive-technology audit or WCAG conformance certification was completed; these remain explicit acceptance work.
+Advertisers see campaigns, independently validated/rejected/pending activity, conversions, gross/reversed/net media spend, creator participation and advertiser RU. Campaign discovery applies account region and creator category/audience requirements. Media and sponsored-event reserve amounts remain separately visible. No external ad-network performance or live cash collection is implied.
 
-## 27. Performance work
+## 26. Admin profitability analytics
 
-Standalone Next output, responsive image sizing, modern image formats, compressed canonical assets, eager critical artwork and deferred noncritical art avoid unnecessary payload and heavy 3D runtime. Production compilation succeeded. Browser captures recorded zero console errors or uncaught page exceptions. Image loading advice was corrected and a subsequent focused browser audit recorded zero image warnings. A non-failing PostgreSQL adapter deprecation warning remains; no Lighthouse score, production Core Web Vitals or load-capacity number is claimed.
+Admin views expose ledger-derived validated gross revenue, retained revenue, user liabilities, advertiser available funds, campaign liabilities, event prize liabilities and the distribution pool account balance, alongside actual growth and review queues. Configured operating targets are explicit estimates. Full audited financial statements, live provider reconciliation and comprehensive operating-cost reporting remain outside this pass.
 
-## 28. Tests executed
+## 27. Visual improvements
 
-Executed formatting checks, zero-warning ESLint, generated Prisma/Next route types and TypeScript checks, unit tests, real PostgreSQL integration tests, Playwright browser journeys, clean committed migrations, seed/reseed, a production build and manual screenshot inspection. The core browser journey creates new user/creator/advertiser accounts and uses a separate seeded administrator for approval. The CI sequence was also exercised locally: seed the test database, run integration tests that finalize periods, then run the complete browser suite against that same database. Database API assertions complement visible form actions.
+Preserved the obsidian/ivory/champagne/amber visual system and canonical orb family. Added profile opportunity modules, analytics cards/chart, event creation/reserve/settlement screens, security/approval screens and tracked sharing. Mobile event rankings and wallet amounts wrap within the screen; the creator page keeps one primary heading. EN/FR, keyboard-native controls and reduced motion remain supported.
 
-## 29. Exact test results
+## 28. GPT Image assets newly generated, if any
 
-- Unit tests: **111 passed**, four files, recorded final suite 2.19 seconds.
-- PostgreSQL integration: **14 passed**, one file, final same-database sequence 3.64 seconds.
-- Chromium browser suite: **16 passed**, final same-database run reported as 1.1 minutes by Playwright. Covers four roles, economic separation, EN/FR, profile row preservation, admin preview and responsive checks.
-- Final typecheck, lint and production build: passed. Formatting is enforced with Prettier.
-- Final screenshot capture: 14 rendered captures; **0 console errors/page exceptions** in the capture run. Eleven representative screenshots retained in docs/qa.
-- Clean migration/seed: three migrations applied successfully; development fixtures loaded and repeatability checked.
-- Remote GitHub CI: **both jobs passed** for implementation commit `4f1d172`. Linux unit suite: 111 passed in 798 ms; PostgreSQL integration: 14 passed in 1.99 seconds; Chromium: 16 passed in 1.0 minute. Formatting, lint, typecheck, clean migrations/seed and production build also passed. See section 39.
-- Docker build/boot, Abacus deployment, external penetration/accessibility/load tests: **not executed**.
+None. `ruvora-orb-card.png` is a 600×600 delivery conversion of existing canonical artwork for Next ImageResponse. Dynamic cards are 1200×630 and were rendered/inspected. No new model version, native 4K image or model provenance claim is made. Reproduction is in `scripts/optimize-assets.mjs` and [VISUAL_ASSET_MANIFEST.md](VISUAL_ASSET_MANIFEST.md).
 
-## 30. Known limitations
+## 29. Responsive validation
 
-Live funding, payout, email delivery/recovery/verification, administrator MFA, trusted conversion/social providers, chargeback handling, privacy workflows, prize payout and operational incident controls are incomplete. Seeded numbers are simulated. Follower claims are self-declared. Feature depth is intentionally the first coherent P0 slice; the 90-section brief is not represented as fully delivered.
+The preserved browser matrix covers 360, 430, 768, 1024, 1440 and 1920 px for homepage/profile. Creator analytics, event standings, prize wallet and account security were exercised at 390 px. Responsive assertions wait for settled layout after viewport changes. Actual desktop/mobile captures of the profile, event, creator, security and referral screens recorded zero page errors and zero document overflow at 390 px. The share image rendered at 1200×630. Preserved screenshots and [visual results](docs/qa/pass02/visual-results.json) are in `docs/qa/pass02`; full device-lab and accessibility audits remain outstanding.
 
-## 31. Remaining technical debt
+## 30. Database migrations
 
-Add outbox-backed providers and background work; paginate larger operational histories; improve observability, rate-limit retention, CSP nonce handling, auditing and economic recovery; validate least-privilege runtime/migration credentials; expand independent browser and accessibility coverage. ESLint remains on the version supported by installed plugins. The PostgreSQL adapter concurrent-query deprecation should be followed upstream and removed before a breaking runtime update.
+All seven migrations apply to an empty local PostgreSQL 18.4 database. A separate synthetic Pass 01 database applied the first three migrations, inserted 53 representative rows across 16 tables including finalized distribution/reversed economic history, then applied the four new migrations. The old-column digest remained `44c6431e45357a0386badcf129eebd3a2ae531e711102073fb891342079b58ef`; balances were identical, no journals were unbalanced, and repeat deploy was a no-op. Prisma schema diff is empty. This is a synthetic upgrade proof, not a production restore rehearsal. See [migration evidence](docs/qa/pass02/migration-evidence.json) and `scripts/verify-migrations.mjs`.
 
-## 32. P1 completed
+## 31. Tests added
 
-Partial P1 foundations include direct referral attribution, rule-versioned bounded referral domain logic, creator/advertiser summaries from actual records, canonical share metadata and configurable economic policy. Full quests/achievements, paid referral issuance, creator themes, sponsor/prize operations, advanced analytics and external social connectors are not claimed complete.
+Added deterministic attribution/event/security unit coverage and PostgreSQL suites for attribution/referral, event settlement, security/providers and cross-source campaign funding. New browser journeys cover creator acquisition, sponsored settlement and two account-security flows. Preserved the original 14 integration and 16 browser scenarios while replacing insecure creator-claim fixtures with trusted contexts. Added public projection, unpublished metadata, share recovery, dotenv configuration safety and worker-preflight regression coverage.
 
-## 33. Recommended next pass
+## 32. Exact test results
 
-Start with verified transactional email and account recovery plus administrator MFA. Then implement trusted ad evidence and provider funding/reconciliation with refund/chargeback/recovery tests. Complete jurisdiction/privacy/prize policies and operational controls, validate the container and restore procedure in staging, and only then approve live-money release. See ROADMAP.md for ordered continuation.
+- Fresh dependency directory: `pnpm install --frozen-lockfile` passed, 533 packages, no local `.env` copied. Fresh private configuration and a second identical configuration run also passed; generated values were not printed.
+- Unit suite: **239/239 passed** across 11 files.
+- Complete PostgreSQL suite: **68/68 passed** across five files, including 21 attribution, 6 campaign-funding, 10 event-settlement, 17 security/provider and 14 preserved workflow scenarios.
+- Combined browser suite: **20/20 passed** in 3.5 minutes, retaining the 16 original scenarios and adding creator attribution, sponsored settlement and two security journeys.
+- Final `pnpm format:check`, zero-warning ESLint, regenerated Prisma/Next route types and TypeScript all passed.
+- Final production application build passed, 24 dynamic routes. This does not prove Linux container boot or Abacus deployment.
+- Clean/upgrade migrations and schema alignment passed as described above.
 
-## 34. Local startup instructions
+The database guard also correctly refused an initial integration command pointed at the development database, before running tests. The pg adapter emits a deprecation warning about queued queries; tests completed without invariant failure. Final fixes are tested again rather than hidden by changed expectations.
 
-Use Node 24 and pnpm 11.19.0. Run `pnpm install --frozen-lockfile`, copy `.env.example` to `.env`, set a private local `DEMO_PASSWORD` of at least 12 characters, and start `pnpm db:local` in a separate terminal. Run `pnpm db:generate`, `pnpm db:migrate`, `pnpm db:seed`, then `pnpm dev`. Open http://localhost:3000. README.md lists the six development identities; their shared password is the local configuration value and is not committed. The existing workspace already has a private local configuration and persistent database.
+## 33. Concurrency validation
 
-## 35. Environment configuration
+Database tests cover duplicate/mixed-source funding, concurrent activity validation/referral caps, event funding/join/finalization, token/MFA replay, approvals, webhook duplicates and repeated concurrent deposits. The security suite runs three rounds of eight simultaneous identical deposits and checks one balanced economic effect. Exact replay preserves the original operation; changing its payload/source conflicts.
 
-DATABASE_URL and TEST_DATABASE_URL must identify separate development/test databases. APP_URL is the exact mutation origin; PUBLIC_SITE_URL controls canonical URLs; NEXT_PUBLIC_APP_URL is reserved build-time configuration and is not currently consumed by application components. APP_ENV labels the environment. Development seed/funding flags are explicit and ignored/refused in production-sensitive paths. Production must replace local credentials, omit DEMO_PASSWORD, use HTTPS and an uncontaminated database. Bootstrap credentials are one-time operator secrets, never checked into source.
+**Financial acceptance: YES within the tested internal transaction and development-provider boundary.** The complete 68-test database suite and 20 browser journeys verify retries, duplicates, reversals and concurrent execution without duplicated money, RU or event prizes for the tested paths. This is bounded test evidence, not a claim of arbitrary failure tolerance or externally reconciled payments.
 
-## 36. Docker instructions
+## 34. Browser/E2E validation
 
-Dockerfile supplies dependencies, build, migration and non-root standalone runner targets. Compose supplies PostgreSQL 18 and optional migration/app services. Stop the embedded DB before `docker compose up -d db`; use `docker compose --profile app up --build -d` for the container shape. `docker compose down` preserves the named volume. Docker is absent on this host, so these authored instructions have not been executed here. A clean production-mode instance needs explicit first-admin and rule initialization before readiness succeeds.
+The creator journey proves the real public Link and HttpOnly-cookie acquisition path through independent activity validation and analytics. The sponsored journey proves funded reserve → real end time → frozen ranking → two MFA admins → exact wallet/refund settlement. Security journeys prove private email verification/replay, MFA enrollment/replay, logged-out reset, old-password denial and all-session revocation. Sensitive security screenshots/traces/videos/AI DOM snapshots are disabled. The final combined run also retains the original role, profile-edit, EN/FR, distribution-preview and responsive scenarios.
 
-## 37. Git branch
+## 35. Known limitations
 
-Canonical remote: https://github.com/david44220/ruvora (private). Working branch: `feature/ruvora-foundation`. `main` and `develop` begin from a neutral empty baseline; the implementation is proposed to `develop` for review. No automatic production merge is performed.
+No verified external social identity, no real payment/payout/mail delivery, no automated privacy erasure/archive worker, no full fraud/Sybil protection, no delegated event co-hosting, no nonzero event RU bonus engine and no automatic post-final prize clawback. Expanded theme/achievement catalogs and cohort/export analytics are future work. Database/application limits and review queues need realistic load testing.
 
-## 38. commits
+## 36. External services still simulated
 
-Initial baseline: `d4a86c0` — `chore: initialize Ruvora repository baseline`. Implemented application: `4f1d172` — `feat: build Ruvora creator economy foundation`. This report and final screenshots are finalized in a following documentation commit. The repository log is authoritative for subsequent changes.
+Development deposits, refunds, chargebacks, mail delivery and signed callback fixtures are explicitly simulated. The underlying internal ledger and database transactions are real. Non-development payment execution fails closed until a real adapter is implemented; payout delivery is unavailable. No credentials, public provider endpoint registration or external provider settlement has been verified.
 
-## 39. PR information if applicable
+## 37. Remaining compliance work
 
-Draft [PR #1 — Build Ruvora creator economy foundation](https://github.com/david44220/ruvora/pull/1) targets `develop` from `feature/ruvora-foundation`. No merge was performed. [GitHub Actions run 34761621252](https://github.com/david44220/ruvora/actions/runs/34761621252) passed both quality and integration jobs for implementation commit `4f1d172`; job logs verify 111 unit, 14 database integration and 16 browser tests. The later handoff commit updates documentation and screenshots only. Consult the PR checks for runs after this recorded implementation verification.
+Operators must establish applicable age/geo, KYC/KYB, AML, tax, advertising evidence, privacy/retention and prize rules with qualified review. Configurable checks and exact accounting are engineering controls, not legal certification. No regulatory or jurisdictional approval is claimed.
 
-## 40. Abacus deployment readiness
+## 38. Remaining technical debt
 
-Portable source, locked dependencies, PostgreSQL migrations, standalone packaging, liveness/readiness endpoints, environment examples, bootstrap procedure and deployment/rollback runbooks are prepared. No Abacus account, domain, TLS routing, container runtime or production database was accessed or deployed. Complete the launch gates and target-environment checks in DEPLOYMENT_ABACUS.md before describing the product as production-ready.
+Integrate live adapters/reconciliation, automated retention with financial-history exceptions, broader dual-approval enforcement, independent operator bootstrap/recovery drills, durable worker monitoring, edge abuse controls and operational alert ownership. Expand measured performance/capacity tests and restore/security/accessibility audits. Address the pg-adapter deprecation before a future pg major upgrade. Keep the current SQL integrity constraints when generating later Prisma migrations.
+
+## 39. Current release classification
+
+**PRE-PRODUCTION engineering build, with development-adapter verification.** The internal creator and sponsored-event loops work and have concrete evidence. Public launch, real-money operation and target deployment remain gated. This classification is not production readiness or a promise of earnings.
+
+## 40. Recommended Pass 03
+
+Prioritize reviewed email/payment/conversion/payout integrations and reconciliation, operational monitoring/backups/restore drills, complete high-impact approval policy, retention/privacy execution and verified audience/anti-abuse evidence. Then extend event delegation, compensation, analytics and creator personalization using the same canonical design and immutable accounting boundaries.
+
+## 41. Exact Abacus deployment readiness
+
+Portable Node 24/Next standalone and PostgreSQL packaging is present, with a separate migration/tooling image, committed assets and documented health/readiness. Configure HTTPS origins, clean staging/production databases, encryption/provider secrets and a host schedule for `pnpm worker:once`. Redis is unnecessary. Docker is unavailable on this Windows host: no Linux image boot, target Abacus account, domain/TLS routing, production backup restore or live-provider validation occurred. Follow [DEPLOYMENT_ABACUS.md](DEPLOYMENT_ABACUS.md).
+
+## 42. Exact commands to deploy/test locally
+
+```sh
+pnpm install --frozen-lockfile
+pnpm dev:configure
+pnpm db:local
+```
+
+Keep the database helper running. In another terminal:
+
+```sh
+pnpm db:generate
+pnpm db:migrate
+pnpm db:seed
+pnpm dev
+```
+
+Read the generated private `DEMO_PASSWORD` from ignored `.env` for documented demo accounts. Never put private secrets in shell arguments or source control. Run worker batches separately with `pnpm worker:once`.
+
+```sh
+pnpm format:check
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm test:e2e
+pnpm build
+```
+
+Integration tests require an isolated test database; in PowerShell:
+
+```powershell
+$env:DATABASE_URL = 'postgresql://ruvora:ruvora-local-only@127.0.0.1:54329/ruvora_test'
+$env:TEST_DATABASE_URL = $env:DATABASE_URL
+pnpm db:migrate
+pnpm test:integration
+```
+
+`node scripts/verify-migrations.mjs` creates two new loopback-only audit databases and retains them. It never resets existing data. `pnpm start` runs a production build and therefore refuses development secrets/adapters at protected endpoints; use the deployment runbook’s clean environment configuration.
+
+## 43. Git branch / commits / PR
+
+Working branch: `feature/pass-02-attribution-events`, based on Pass 01 `cbd762a`. Canonical remote: [david44220/ruvora](https://github.com/david44220/ruvora). Local final checks are complete. The implementation commit and draft PR are published in the next delivery step; GitHub Actions must complete before integration. No automatic merge into `develop`/`main` or production deployment is included.

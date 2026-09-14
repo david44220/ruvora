@@ -15,3 +15,11 @@ A successful service transaction must atomically enforce duplicate protection, r
 `calculateActivityRewards` produces user RU, optional independent eligible-creator RU and advertiser RU from the billable validated origin. Configurable rates and the immutable rule version travel with the award. Advertising self-participation is disallowed. Reversals preserve the original activity and produce compensating economic records or post-finalization review.
 
 Development activity simulation must be clearly labelled and disabled where real provider verification is required. No view-duration verification, conversion-provider certification, external social verification or live ad delivery should be inferred from the pure validation function. Future providers must supply verifiable evidence through provider-neutral adapters.
+
+## Pass 02 attribution and provider evidence
+
+The activity request accepts campaign, type, optional linked event, evidence and idempotency key. It rejects creator/referrer IDs and handles. An internal third argument containing opaque cookie credentials resolves server-owned creator provenance; the snapshot and complete request fingerprint are persisted before pending review. Current campaign regions and attributed creator targeting are enforced again at validation.
+
+Signed conversion callbacks are stored by the provider foundation. A conversion with provider REJECTED or REVERSED decision cannot validate, including in development. Nondemo conversion validation requires a stored VERIFIED provider decision. Only an explicitly simulated development campaign may use an independent administrator's attested manual evidence instead. Callback receipt never invents an administrator or automatically mints RU; negative provider decisions preserve financial history and open review/holds for previously validated recipients.
+
+Campaign entries and submissions record deduplicated real starts, but a start creates no financial value. Analytics reports actual reviewed delivery, creator attribution, billed spend, reversals and distinct advertiser RU. Event-linked reviews and reversals lock the event and prevent host/sponsor self-farming or post-settlement ranking changes. See ATTRIBUTION_ENGINE.md, REFERRAL_ENGINE.md, EVENT_ENGINE.md and provider security documentation for the detailed boundaries.

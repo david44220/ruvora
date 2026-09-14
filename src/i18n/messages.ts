@@ -1,4 +1,6 @@
+import { pass02en, pass02fr } from "./pass02";
 export const en = {
+  ...pass02en,
   addSocial: "Add a social profile",
   addLink: "Add a link",
   remove: "Remove",
@@ -308,6 +310,7 @@ export const en = {
 export type MessageKey = keyof typeof en;
 export type Locale = "en" | "fr";
 export const fr: Record<MessageKey, string> = {
+  ...pass02fr,
   addSocial: "Ajouter un profil social",
   addLink: "Ajouter un lien",
   remove: "Supprimer",

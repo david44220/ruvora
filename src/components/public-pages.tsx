@@ -1,16 +1,32 @@
 "use client";
 import Image from "next/image";
 import Link from "next/link";
-import { useState } from "react";
-import { ArrowUpRight, Share2, Copy, Link2, Trophy, Sparkles, Users } from "lucide-react";
+import { useEffect, useRef } from "react";
+import { ArrowUpRight, Link2, Trophy, Sparkles, Users } from "lucide-react";
 import { useLocale } from "@/i18n/provider";
-import { api } from "@/lib/api";
+import { api, minorMoney } from "@/lib/api";
 import { useResource, useAction } from "@/lib/hooks";
 import { type RuvoraEvent, type EventDetail } from "@/lib/types";
 import { PublicNav, Footer, Orb, Brand, Eyebrow, Notice, Loading, Empty, ButtonLink } from "./ui";
+import { TrackedShare } from "./growth";
+import { defaultProfileModules } from "./profile-modules";
+import type { ProfileModule } from "@/lib/types";
+import type { MessageKey } from "@/i18n/messages";
 import { EventCard } from "./workspace-ui";
 export interface PublicProfileData {
+  entry?: { slug: string; url: string } | null;
+  referralEntry?: { slug: string; url: string } | null;
+  opportunities?: {
+    id: string;
+    name: string;
+    description: string;
+    objective: string;
+    isDemo: boolean;
+    url: string;
+  }[];
+  trackedEvents?: Record<string, string>;
   profile: {
+    profileModules?: ProfileModule[];
     displayName: string;
     handle: string;
     bio: string;
@@ -32,18 +48,14 @@ export function PublicProfile({
   canonicalUrl: string;
 }) {
   const { t, locale } = useLocale();
-  const [copied, setCopied] = useState(false);
-  const action = useAction();
   const p = data.profile;
-  async function share() {
-    await action.run(async () => {
-      if (navigator.share) await navigator.share({ title: p.displayName, url: canonicalUrl });
-      else {
-        await navigator.clipboard.writeText(canonicalUrl);
-        setCopied(true);
-      }
-    });
-  }
+  const tracked = useRef(false);
+  useEffect(() => {
+    if (tracked.current || !data.entry) return;
+    tracked.current = true;
+    void api("/attribution/start", { slug: data.entry.slug }).catch(() => {});
+  }, [data.entry]);
+  const modules = p.profileModules?.length === 5 ? p.profileModules : defaultProfileModules;
   return (
     <>
       <PublicNav />
@@ -77,53 +89,100 @@ export function PublicProfile({
                 </span>
               </div>
               <p className="field-hint">{t("selfDeclared")}</p>
-              <div className="social-icons">
-                {p.socialLinks.map((social, i) => (
-                  <a
-                    key={`${social.platform}-${i}`}
-                    href={social.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label={social.platform}
-                    className="text-link"
+              {modules
+                .filter((module) => module.visible)
+                .map((module) => (
+                  <section
+                    key={module.type}
+                    className={"public-module public-module-" + module.type.toLowerCase()}
                   >
-                    {social.platform}
-                    <ArrowUpRight size={13} />
-                  </a>
+                    {module.type === "SOCIALS" && (
+                      <div className="social-icons">
+                        {p.socialLinks.map((social, i) => (
+                          <a
+                            key={i}
+                            href={social.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            aria-label={social.platform}
+                            className="text-link"
+                          >
+                            {social.platform}
+                            <ArrowUpRight size={13} />
+                          </a>
+                        ))}
+                      </div>
+                    )}
+                    {module.type === "LINKS" &&
+                      (p.customLinks.length ? (
+                        p.customLinks.map((link, i) => (
+                          <a
+                            className="profile-link"
+                            key={i}
+                            href={link.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            <span>
+                              <span className="link-icon">
+                                <Link2 size={19} />
+                              </span>
+                              {link.title}
+                            </span>
+                            <ArrowUpRight size={19} />
+                          </a>
+                        ))
+                      ) : (
+                        <p className="panel-description">{t("noLinks")}</p>
+                      ))}
+                    {module.type === "OPPORTUNITY" && data.entry && (
+                      <div className="featured-opportunities">
+                        <Eyebrow>{t("p2Opportunity")}</Eyebrow>
+                        {data.opportunities?.length ? (
+                          data.opportunities.map((c) => (
+                            <article className="profile-opportunity" key={c.id}>
+                              <span className="tag">
+                                {t(("objective" + c.objective) as MessageKey)}
+                              </span>
+                              <h3>{c.name}</h3>
+                              <p>{c.description || t("p2OpportunityIntro")}</p>
+                              <Link href={c.url} className="button button-small">
+                                {t("p2ExploreOpportunity")}
+                                <ArrowUpRight size={16} />
+                              </Link>
+                              {c.isDemo && <small>{t("development")}</small>}
+                            </article>
+                          ))
+                        ) : (
+                          <p className="panel-description">{t("p2NoFeatured")}</p>
+                        )}
+                      </div>
+                    )}
+                    {module.type === "EVENT" &&
+                      data.events.map((event) => (
+                        <Link
+                          className="profile-event-mini"
+                          key={event.id}
+                          href={data.trackedEvents?.[event.id] ?? "/events/" + event.slug}
+                        >
+                          <Trophy size={27} />
+                          <div>
+                            <small>{t("eventTag")}</small>
+                            <strong>
+                              {event.localizedContent?.[locale]?.title || event.title}
+                            </strong>
+                          </div>
+                          <ArrowUpRight size={18} />
+                        </Link>
+                      ))}
+                    {module.type === "REFERRAL" && data.referralEntry && (
+                      <>
+                        <ButtonLink href={data.referralEntry.url}>{t("supportCreator")}</ButtonLink>
+                        <p className="field-hint">{t("p2DirectOnly")}</p>
+                      </>
+                    )}
+                  </section>
                 ))}
-              </div>
-              {!p.customLinks.length ? (
-                <p className="panel-description">{t("noLinks")}</p>
-              ) : (
-                p.customLinks.map((link, i) => (
-                  <a
-                    className="profile-link"
-                    key={`${link.url}-${i}`}
-                    href={link.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    <span>
-                      <span className="link-icon">
-                        <Link2 size={19} />
-                      </span>
-                      {link.title}
-                    </span>
-                    <ArrowUpRight size={19} />
-                  </a>
-                ))
-              )}
-              {data.events.map((event) => (
-                <Link className="profile-event-mini" key={event.id} href={`/events/${event.slug}`}>
-                  <Trophy size={27} />
-                  <div>
-                    <small>{t("eventTag")}</small>
-                    <strong>{event.title}</strong>
-                  </div>
-                  <ArrowUpRight size={18} />
-                </Link>
-              ))}
-              <ButtonLink href={`/r/${p.handle}`}>{t("supportCreator")}</ButtonLink>
               <p className="profile-disclaimer">{t("noGuarantee")}</p>
               {p.isDemo && <p className="profile-disclaimer">{t("profileDemo")}</p>}
               <div className="profile-powered">
@@ -131,12 +190,11 @@ export function PublicProfile({
               </div>
             </div>
           </article>
-          <div className="share-row">
-            <button onClick={share}>
-              {copied ? <Copy size={15} /> : <Share2 size={15} />} {t(copied ? "copied" : "share")}
-            </button>
-          </div>
-          {action.notice && <Notice message={action.notice} error />}
+          <TrackedShare
+            surface="PROFILE"
+            entryUrl={data.entry?.url ?? canonicalUrl}
+            cardUrl={"/share-card/profile/" + p.handle}
+          />
         </div>
       </main>
       <Footer />
@@ -173,7 +231,7 @@ export function EventsPage() {
     </>
   );
 }
-export function EventPage({ slug }: { slug: string }) {
+export function EventPage({ slug, entryUrl }: { slug: string; entryUrl?: string }) {
   const { t, locale } = useLocale();
   const result = useResource<EventDetail>(`/events/${encodeURIComponent(slug)}`);
   const action = useAction();
@@ -208,8 +266,13 @@ export function EventPage({ slug }: { slug: string }) {
                       <Trophy size={14} />
                       {t("eventTag")}
                     </span>
-                    <h1>{e.title}</h1>
-                    <p>{e.description}</p>
+                    <h1>{e.localizedContent?.[locale]?.title || e.title}</h1>
+                    <p>{e.localizedContent?.[locale]?.description || e.description}</p>
+                    {e.sponsor && (
+                      <span className="event-sponsor">
+                        {t("p2Sponsor")} {e.sponsor}
+                      </span>
+                    )}
                     <button
                       className="button"
                       onClick={join}
@@ -222,7 +285,25 @@ export function EventPage({ slug }: { slug: string }) {
                   </div>
                 </div>
                 {e.isDemo && <p className="profile-disclaimer">{t("development")}</p>}
+                <TrackedShare
+                  surface="EVENT"
+                  targetId={e.id}
+                  entryUrl={entryUrl}
+                  cardUrl={"/share-card/event/" + e.slug}
+                />
                 <div className="event-detail-stats">
+                  <div>
+                    <small>{t("p2PrizePool")}</small>
+                    <strong>{minorMoney(e.fundedMinor ?? "0", locale)}</strong>
+                  </div>
+                  <div>
+                    <small>{t("p2YourRank")}</small>
+                    <strong>{result.data?.personal?.rank ?? "—"}</strong>
+                  </div>
+                  <div>
+                    <small>{t("p2YourPrize")}</small>
+                    <strong>{minorMoney(result.data?.personalPrizeMinor ?? "0", locale)}</strong>
+                  </div>
                   <div>
                     <small>{t("participantsCount")}</small>
                     <strong>{e.participantCount || 0}</strong>
@@ -239,7 +320,7 @@ export function EventPage({ slug }: { slug: string }) {
                 <div className="event-detail-body">
                   <section className="panel">
                     <div className="panel-header">
-                      <h3>{t("leaderboard")}</h3>
+                      <h3>{t(e.settlement ? "p2FrozenRanking" : "leaderboard")}</h3>
                       <Users size={19} />
                     </div>
                     {!result.data?.leaderboard.length ? (
@@ -274,7 +355,37 @@ export function EventPage({ slug }: { slug: string }) {
                   </section>
                   <section className="panel">
                     <h3>{t("rules")}</h3>
-                    <p>{t("eventRuleText")}</p>
+                    <p>
+                      {e.localizedContent?.[locale]?.rules ||
+                        (typeof e.rules === "string" ? e.rules : t("eventRuleText"))}
+                    </p>
+                    <p className="field-hint">
+                      {t("p2RulesVersion")}: {e.configVersion}
+                    </p>
+                    <p>
+                      {t(
+                        BigInt(e.prizeBudgetMinor ?? "0") > 0n ? "p2FundedPrizeNote" : "p2NoPrize",
+                      )}
+                    </p>
+                    {e.configuration?.milestones?.map((m) => (
+                      <div className="event-milestone" key={m.points}>
+                        <Sparkles size={17} />
+                        <span>{m.title[locale]}</span>
+                        <strong>
+                          {m.points} {t("eventPoints")}
+                        </strong>
+                      </div>
+                    ))}
+                    {e.configuration?.rewardTiers?.map((tier) => (
+                      <div className="event-milestone" key={tier.fromRank}>
+                        <span>
+                          #{tier.fromRank}
+                          {tier.toRank > tier.fromRank ? "–" + tier.toRank : ""}
+                        </span>
+                        <strong>{(tier.shareBps / 100).toLocaleString(locale)}%</strong>
+                      </div>
+                    ))}
+                    {e.settlement && <p className="field-hint">{t("p2SettlementNote")}</p>}
                     <div className="form-actions">
                       <ButtonLink href="/app/opportunities" secondary small>
                         {t("opportunities")}

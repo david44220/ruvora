@@ -30,3 +30,7 @@ Eligible zero-cent allocations are final category-period outcomes and their RU m
 No monthly profit amount or legal policy is embedded as a permanent business rule. `DEVELOPMENT_REWARD_RULE` contains clearly named seed defaults only. Published creator access thresholds describe feature eligibility, never guaranteed income. The P0 core supports EUR only; future currencies require explicitly separate balanced journals and a reviewed FX domain.
 
 Read `RU_ENGINE.md`, `LEDGER.md`, `MARGIN_GOVERNOR.md`, `EVENT_ENGINE.md`, `ADVERTISING_ENGINE.md` and `FRAUD_AND_RISK.md` before changing economic behavior. Unit evidence lives in `tests/unit/economy.test.ts`.
+
+## Pass 02 trusted growth integration
+
+Creator attribution now comes from opaque server-issued entry contexts and account-bound cookies. A user-supplied creator handle is rejected by the activity schema. Visits, registrations and shares create telemetry only. Positive independently validated billable delivery can create CREATOR RU; a separate direct referral category is bounded by captured policy and serialized monthly caps. See ATTRIBUTION_ENGINE.md and REFERRAL_ENGINE.md for origin, expiry, eligibility, idempotency and reversal behavior. Money, RU, XP and Event Points remain separate throughout this pipeline.

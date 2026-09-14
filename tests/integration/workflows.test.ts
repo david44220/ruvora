@@ -16,6 +16,12 @@ import {
 } from "../../src/server/campaigns";
 import { submitActivity, reviewActivity, reverseActivity } from "../../src/server/activities";
 import { joinEvent, getEvent } from "../../src/server/events";
+import {
+  getProfileEntry,
+  startAttribution,
+  bindAttribution,
+  type AttributionTokens,
+} from "../../src/server/attribution";
 import { createDistributionPreview, commitDistribution } from "../../src/server/distributions";
 import { getAdmin, setAccountHold, updateEconomicRules } from "../../src/server/views";
 import { account, balance } from "../../src/server/ledger";
@@ -30,6 +36,7 @@ const periodStart = new Date().toISOString();
 const password = "integration-only-passphrase";
 let participant: User, creator: User, advertiser: User, admin: User, campaign: Campaign;
 let eventId: string, activityId: string, reversibleActivityId: string;
+let attribution: AttributionTokens;
 const longReason = "Independent integration review of supplied campaign evidence.";
 const signup = async (role: "USER" | "CREATOR" | "ADVERTISER", key: string) => {
   const result = await register({
@@ -68,6 +75,8 @@ beforeAll(async () => {
   participant = await signup("USER", "user");
   creator = await signup("CREATOR", "creator");
   advertiser = await signup("ADVERTISER", "advertiser");
+  attribution = await startAttribution((await getProfileEntry(creator.handle!)).slug);
+  await bindAttribution(participant, attribution);
   admin = await db.user.create({
     data: {
       email: `admin-${tag}@integration.test`,
@@ -165,7 +174,18 @@ describe("PostgreSQL economic and identity integration", () => {
         decision: "APPROVE",
         reason: longReason,
       }),
-    ).rejects.toMatchObject({ code: "REVIEW_CONFLICT" });
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const beneficiaryAdmin = await db.user.update({
+      where: { id: advertiser.id },
+      data: { roles: ["USER", "ADVERTISER", "ADMIN"] },
+    });
+    try {
+      await expect(
+        reviewCampaign(beneficiaryAdmin, campaign.id, { decision: "APPROVE", reason: longReason }),
+      ).rejects.toMatchObject({ code: "REVIEW_CONFLICT" });
+    } finally {
+      await db.user.update({ where: { id: advertiser.id }, data: { roles: advertiser.roles } });
+    }
     await reviewCampaign(admin, campaign.id, { decision: "APPROVE", reason: longReason });
   });
   it("public opportunities omit internal review notes, identifiers and financial budgets", async () => {
@@ -204,19 +224,22 @@ describe("PostgreSQL economic and identity integration", () => {
       campaignId: campaign.id,
       type: "QUALIFIED_VIEW",
       eventId,
-      creatorHandle: creator.handle!,
       idempotencyKey: `${tag}:activity-one`,
       evidence: "Meaningful submitted test evidence for independent review.",
     };
-    const result = await submitActivity(participant, input);
+    const result = await submitActivity(participant, input, attribution);
     activityId = result.activity.id;
     expect(result.activity.state).toBe("PENDING_VALIDATION");
-    expect((await submitActivity(participant, input)).activity.id).toBe(activityId);
+    expect((await submitActivity(participant, input, attribution)).activity.id).toBe(activityId);
     await expect(
-      submitActivity(participant, {
-        ...input,
-        evidence: "Changed evidence must conflict with the same operation key.",
-      }),
+      submitActivity(
+        participant,
+        {
+          ...input,
+          evidence: "Changed evidence must conflict with the same operation key.",
+        },
+        attribution,
+      ),
     ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
     expect(await db.rewardUnit.count({ where: { activityId } })).toBe(0);
     expect(await balance(db, `campaign:${campaign.id}`)).toBe(500n);
@@ -240,13 +263,16 @@ describe("PostgreSQL economic and identity integration", () => {
     expect(event.personal?.rank).toBe(1);
   });
   it("reverses before distribution with compensating money, RU state, XP and scoped EP", async () => {
-    const result = await submitActivity(participant, {
-      campaignId: campaign.id,
-      type: "QUALIFIED_VIEW",
-      eventId,
-      creatorHandle: creator.handle!,
-      idempotencyKey: `${tag}:activity-two`,
-    });
+    const result = await submitActivity(
+      participant,
+      {
+        campaignId: campaign.id,
+        type: "QUALIFIED_VIEW",
+        eventId,
+        idempotencyKey: `${tag}:activity-two`,
+      },
+      attribution,
+    );
     reversibleActivityId = result.activity.id;
     await reviewActivity(admin, reversibleActivityId, { decision: "VALIDATE", reason: longReason });
     await expect(
@@ -255,7 +281,18 @@ describe("PostgreSQL economic and identity integration", () => {
         reversibleActivityId,
         { reason: longReason },
       ),
-    ).rejects.toMatchObject({ code: "REVIEW_CONFLICT" });
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const beneficiaryAdmin = await db.user.update({
+      where: { id: advertiser.id },
+      data: { roles: ["USER", "ADVERTISER", "ADMIN"] },
+    });
+    try {
+      await expect(
+        reverseActivity(beneficiaryAdmin, reversibleActivityId, { reason: longReason }),
+      ).rejects.toMatchObject({ code: "REVIEW_CONFLICT" });
+    } finally {
+      await db.user.update({ where: { id: advertiser.id }, data: { roles: advertiser.roles } });
+    }
     await reverseActivity(admin, reversibleActivityId, {
       reason: "Independent investigation invalidated the supplied evidence.",
     });

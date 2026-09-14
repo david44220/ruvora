@@ -24,3 +24,9 @@ A pre-settlement invalidation produces a recorded reversal. `reverseRewardUnit` 
 Referral RU have their own category. `calculateReferralReward` allows one direct attribution based on a legitimate validated source award, caps reward per activity and per referrer-period, and caps qualifying referee count. It rejects self/shared-verified-identity referrals, duplicate awards, ineligible sources and referral-on-referral compensation. Server storage must enforce attribution uniqueness and lock cap counters during award creation.
 
 Arbitrary profile actions and deposits cannot mint economic RU. Future event bonuses require explicit versioned eligibility, an approved economic source and audit records; generic XP/Event Point progress is not sufficient by itself.
+
+## Persisted Pass 02 sources
+
+CREATOR awards require a matching immutable activity/context snapshot from a server-issued entry. The creator is rechecked against current central policy and campaign country/category/follower filters at review. Old unvalidated client-claimed creator attribution cannot mint new CREATOR RU. Existing finalized history is preserved.
+
+REFERRAL awards are now persisted as one immutable ReferralCredit per validated activity, with a distinct REFERRAL RewardUnit. The service uses only base USER RU, locks the referrer before reading monthly caps, and retains reversed credits in cap usage. Registration creates no units. Current disable/hold/suspension checks can stop new awards without rewriting the captured relationship. ATTRIBUTION_ENGINE.md and REFERRAL_ENGINE.md document the complete contracts.
