@@ -1,0 +1,95 @@
+name: CI
+on:
+  push:
+    branches: [main, develop, "feature/**", "hotfix/**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: postgresql://build:build@127.0.0.1:5432/build
+      APP_URL: http://localhost:3000
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - name: Install pinned package manager
+        run: npm install --global pnpm@11.19.0
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - name: Unit tests
+        run: pnpm test
+      - name: Production build
+        run: pnpm build
+
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: ruvora
+          POSTGRES_PASSWORD: ci-only-not-a-secret
+          POSTGRES_DB: ruvora_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ruvora -d ruvora_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgresql://ruvora:ci-only-not-a-secret@127.0.0.1:5432/ruvora_test
+      TEST_DATABASE_URL: postgresql://ruvora:ci-only-not-a-secret@127.0.0.1:5432/ruvora_test
+      APP_URL: http://localhost:3000
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      APP_ENV: development
+      EMAIL_PROVIDER: development
+      PAYMENT_PROVIDER: development
+      ALLOW_DEV_SEED: "true"
+      ALLOW_DEMO_FUNDING: "true"
+      DEMO_PASSWORD: ci-only-password-2026
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - name: Install pinned package manager
+        run: npm install --global pnpm@11.19.0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:generate
+      - name: Apply committed migrations to an empty PostgreSQL database
+        run: pnpm db:migrate
+      - name: Generate isolated security fixture secrets
+        run: |
+          node --input-type=module -e 'import {randomBytes} from "node:crypto"; import {appendFileSync} from "node:fs"; appendFileSync(process.env.GITHUB_ENV, "SECURITY_ENCRYPTION_KEY="+randomBytes(32).toString("base64")+"\nDEV_WEBHOOK_SECRET="+randomBytes(32).toString("base64url")+"\nDEMO_TOTP_SECRET="+"JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"+"\n");'
+      - name: Seed isolated development fixtures
+        run: pnpm db:seed
+      - name: Database and API integration tests
+        run: pnpm test:integration
+      - name: Install Chromium and system dependencies
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Browser journeys against the isolated test database
+        run: pnpm test:e2e

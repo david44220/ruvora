@@ -1,0 +1,25 @@
+{
+  "snapshots": [
+    {
+      "name": "profile",
+      "overflow": false
+    },
+    {
+      "name": "event",
+      "overflow": false
+    },
+    {
+      "name": "creator",
+      "overflow": false
+    },
+    {
+      "name": "security",
+      "overflow": false
+    },
+    {
+      "name": "referrals",
+      "overflow": false
+    }
+  ],
+  "errors": []
+}

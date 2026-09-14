@@ -1,0 +1,43 @@
+{
+  "date": "2026-09-14T13:37:45.280Z",
+  "cleanMigrations": [
+    {
+      "name": "202609130001_initial",
+      "finished": true
+    },
+    {
+      "name": "202609130002_integrity",
+      "finished": true
+    },
+    {
+      "name": "202609130003_activity_guard",
+      "finished": true
+    },
+    {
+      "name": "202609140004_attribution",
+      "finished": true
+    },
+    {
+      "name": "202609140005_events",
+      "finished": true
+    },
+    {
+      "name": "202609140006_security",
+      "finished": true
+    },
+    {
+      "name": "202609140007_profile_discovery",
+      "finished": true
+    }
+  ],
+  "cleanApplicationTables": 33,
+  "upgradedLegacyRows": 53,
+  "upgradedLegacyTables": 16,
+  "beforeDigest": "44c6431e45357a0386badcf129eebd3a2ae531e711102073fb891342079b58ef",
+  "afterDigest": "44c6431e45357a0386badcf129eebd3a2ae531e711102073fb891342079b58ef",
+  "exactEconomicHistoryPreserved": true,
+  "unbalancedJournals": 0,
+  "finalizedDistributions": 1,
+  "repeatDeployNoop": true,
+  "limitation": "Representative synthetic Pass 01 SQL records with a real deterministic domain-generated finalized distribution. This is not an actual production restore or exhaustive deployment rehearsal."
+}

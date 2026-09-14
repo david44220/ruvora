@@ -1,0 +1,24 @@
+{
+  "date": "2026-09-14",
+  "environment": "local development, PostgreSQL18.4, Next16.3.5",
+  "initialHotReloadRun": {
+    "requests": 72,
+    "failures": 1,
+    "nativeCause": "not retained; no specific root-cause claim"
+  },
+  "repeatedRun": {
+    "requests": 72,
+    "rounds": 3,
+    "simultaneousPerPhase": 12,
+    "errors": [],
+    "browserProfileChecks": 3
+  },
+  "freshServerRun": {
+    "requests": 24,
+    "rounds": 1,
+    "simultaneousPerPhase": 12,
+    "errors": [],
+    "browserProfileChecks": 1
+  },
+  "limitations": "Synthetic development profiles; no production load/SLA claim. Temporary error classification instrumentation was removed before fresh-server verification."
+}
