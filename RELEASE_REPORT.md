@@ -72,7 +72,7 @@ Server checks enforce country/cap/date/point limits, active membership, independ
 
 ## 17. Financial/ledger changes
 
-All new monetary paths use the existing immutable balanced ledger and serializable transaction boundary. Raw SQL guards reconcile prize counterparties and enforce final-history freezes. PostgreSQL serialization retries handle both Prisma P2034 and pg-adapter P2010 SQLSTATE 40001/40P01. Payment retries add bounded jitter under contention. Campaign funding binds both development and available-funds sources to the same request identity while preserving legacy deposit replay.
+All new monetary paths use the existing immutable balanced ledger and serializable transaction boundary. Raw SQL guards reconcile prize counterparties and enforce final-history freezes. PostgreSQL serialization retries handle both Prisma P2034 and pg-adapter P2010 SQLSTATE 40001/40P01 across generated/CommonJS and ESM Prisma runtime identities. Known-error discrimination preserves the existing five attempts, Serializable isolation and transaction timeouts. Payment retries add bounded jitter under contention. Campaign funding binds both development and available-funds sources to the same request identity while preserving legacy deposit replay.
 
 ## 18. Margin Governor changes
 
@@ -133,21 +133,22 @@ Added deterministic attribution/event/security unit coverage and PostgreSQL suit
 ## 32. Exact test results
 
 - Fresh dependency directory: `pnpm install --frozen-lockfile` passed, 533 packages, no local `.env` copied. Fresh private configuration and a second identical configuration run also passed; generated values were not printed.
-- Unit suite: **239/239 passed** across 11 files.
-- Complete PostgreSQL suite: **68/68 passed** across five files, including 21 attribution, 6 campaign-funding, 10 event-settlement, 17 security/provider and 14 preserved workflow scenarios.
+- Unit suite: **258/258 passed** across 12 files.
+- Complete PostgreSQL suite: **72/72 passed** across six files, including 21 attribution, 4 share-entry concurrency, 6 campaign-funding, 10 event-settlement, 17 security/provider and 14 preserved workflow scenarios.
 - Combined browser suite: **20/20 passed** in 3.5 minutes, retaining the 16 original scenarios and adding creator attribution, sponsored settlement and two security journeys.
+- After the concurrency correction, the creator browser journey passed **3/3 repeated runs with retries disabled** (55.9 seconds).
 - Final `pnpm format:check`, zero-warning ESLint, regenerated Prisma/Next route types and TypeScript all passed.
 - Final production application build passed, 24 dynamic routes. This does not prove Linux container boot or Abacus deployment.
 - Clean/upgrade migrations and schema alignment passed as described above.
 - GitHub Ubuntu CI passed for implementation `58482fb3c3ef8303b4047b3be70c7ccf48ffc7fb`: quality/build and integration/browser jobs. The remote run independently repeated **239 unit**, **68 database** and **20 browser** tests. [Verified implementation run](https://github.com/david44220/ruvora/actions/runs/34853840432).
 
-The database guard also correctly refused an initial integration command pointed at the development database, before running tests. The pg adapter emits a deprecation warning about queued queries; tests completed without invariant failure. Final fixes are tested again rather than hidden by changed expectations.
+The database guard also correctly refused an initial integration command pointed at the development database, before running tests. The pg adapter emits a deprecation warning about queued queries. The initial implementation CI passed 20/20 browsers, but a later documentation-only run exposed one intermittent creator-page failure (19 passed, one passed on retry): simultaneous first publication escaped as Prisma P2034. The follow-up recognizes actual CJS/ESM Prisma error envelopes and makes canonical share lookup read existing origins before insert. Runtime identity mismatch is reproduced by unit tests; it is not proven to be the sole cause of that CI incident. Browser CI now fails on flakes despite retaining a diagnostic retry.
 
 ## 33. Concurrency validation
 
-Database tests cover duplicate/mixed-source funding, concurrent activity validation/referral caps, event funding/join/finalization, token/MFA replay, approvals, webhook duplicates and repeated concurrent deposits. The security suite runs three rounds of eight simultaneous identical deposits and checks one balanced economic effect. Exact replay preserves the original operation; changing its payload/source conflicts.
+Database tests cover duplicate/mixed-source funding, concurrent activity validation/referral caps, event funding/join/finalization, token/MFA replay, approvals, webhook duplicates and repeated concurrent deposits. The security suite runs three rounds of eight simultaneous identical deposits and checks one balanced economic effect. Exact replay preserves the original operation; changing its payload/source conflicts. Four new database regressions exercise 160 concurrent first/warm share/profile requests and 24 revoked/held denials with stable canonical IDs and unchanged existing-row xmin. A 72-request mixed API/server-render repeat and a separate fresh-process 24-request run passed without errors, with actual Chromium profile checks. One earlier 72-request run during the development hot-reload session returned a single generic API500; its native cause was not retained, so no specific timeout/root-cause claim is made. See [HTTP concurrency evidence](docs/qa/pass02/http-concurrency.json).
 
-**Financial acceptance: YES within the tested internal transaction and development-provider boundary.** The complete 68-test database suite and 20 browser journeys verify retries, duplicates, reversals and concurrent execution without duplicated money, RU or event prizes for the tested paths. This is bounded test evidence, not a claim of arbitrary failure tolerance or externally reconciled payments.
+**Financial acceptance: YES within the tested internal transaction and development-provider boundary.** The complete 72-test database suite and 20 browser journeys verify retries, duplicates, reversals and concurrent execution without duplicated money, RU or event prizes for the tested paths. This is bounded test evidence, not a claim of arbitrary failure tolerance or externally reconciled payments.
 
 ## 34. Browser/E2E validation
 
@@ -167,7 +168,7 @@ Operators must establish applicable age/geo, KYC/KYB, AML, tax, advertising evid
 
 ## 38. Remaining technical debt
 
-Integrate live adapters/reconciliation, automated retention with financial-history exceptions, broader dual-approval enforcement, independent operator bootstrap/recovery drills, durable worker monitoring, edge abuse controls and operational alert ownership. Expand measured performance/capacity tests and restore/security/accessibility audits. Address the pg-adapter deprecation before a future pg major upgrade. Keep the current SQL integrity constraints when generating later Prisma migrations.
+Integrate live adapters/reconciliation, automated retention with financial-history exceptions, broader dual-approval enforcement, independent operator bootstrap/recovery drills, durable worker monitoring, edge abuse controls and operational alert ownership. Batch profile discovery’s per-campaign balance/count reads before larger capacity targets; the current 50-campaign discovery can amplify pool pressure. Expand measured performance/capacity tests and restore/security/accessibility audits. Address the pg-adapter deprecation before a future pg major upgrade. Keep the current SQL integrity constraints when generating later Prisma migrations.
 
 ## 39. Current release classification
 
@@ -224,6 +225,6 @@ pnpm test:integration
 
 Canonical remote: [david44220/ruvora](https://github.com/david44220/ruvora). Published branch: `feature/pass-02-attribution-events`, based on Pass 01 `cbd762a`. Implementation commit: [`58482fb3c3ef8303b4047b3be70c7ccf48ffc7fb`](https://github.com/david44220/ruvora/commit/58482fb3c3ef8303b4047b3be70c7ccf48ffc7fb).
 
-[Draft PR 2](https://github.com/david44220/ruvora/pull/2) targets `develop` and includes the unmerged foundation from PR 1. Both `main` and `develop` still contain neutral baseline `d4a86c0`; the implementation is complete on its feature branch. All 220 committed files were compared with GitHub by path and Git blob hash, with zero missing, extra or mismatched files. Private local secrets were absent from the committed tree.
+[Draft PR 2](https://github.com/david44220/ruvora/pull/2) targets `develop` and includes the unmerged foundation from PR 1. Both `main` and `develop` still contain neutral baseline `d4a86c0`; the implementation is complete on its feature branch. All 220 files in the original implementation/handoff tree were compared with GitHub by path and Git blob hash, with zero missing, extra or mismatched files. Private local secrets were absent from the committed tree.
 
-Implementation [GitHub Actions run 34853840432](https://github.com/david44220/ruvora/actions/runs/34853840432) passed both jobs on Ubuntu, including clean migrations/seed, all test suites and production build. This documentation-only handoff records that verified implementation; its own latest CI result is available in the [PR checks](https://github.com/david44220/ruvora/pull/2/checks). No automatic merge or deployment occurred.
+Implementation [GitHub Actions run 34853840432](https://github.com/david44220/ruvora/actions/runs/34853840432) passed both jobs on Ubuntu, including clean migrations/seed, all test suites and production build. Documentation handoff `c1449fc` subsequently exposed the creator-page flake described above. The follow-up concurrency correction and strict flake gate are included on the same branch; its exact current commit and latest CI result are available in [PR commits](https://github.com/david44220/ruvora/pull/2/commits) and [PR checks](https://github.com/david44220/ruvora/pull/2/checks). No automatic merge or deployment occurred.

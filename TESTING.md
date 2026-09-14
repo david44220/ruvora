@@ -94,3 +94,5 @@ The creator browser journey verifies anonymous public-profile acquisition throug
 Browser tests run with one worker. TOTP replay protection is global per credential, so tests either reuse an already-elevated session or wait for a new authenticator counter. Never reset a credential’s accepted counter to make tests pass. Event tests wait for their real approved end time; they never edit finalized dates/configuration.
 
 A development database contains synthetic financial activity after browser tests. This is expected and labelled. Re-run only the failing scenario while fixing a defect; the final suite verifies the integrated state. Exact counts, migration upgrade evidence, fresh install, build and GitHub CI are recorded in RELEASE_REPORT.md.
+
+CI sets Playwright `failOnFlakyTests` while retaining one retry for diagnosis. A journey that fails once and passes on retry still fails the CI gate. `tests/unit/db-atomic.test.ts` exercises actual Prisma CommonJS/ESM errors and the bounded retry contract; `tests/integration/share-entry-concurrency.test.ts` covers simultaneous first publication and unchanged existing share records.

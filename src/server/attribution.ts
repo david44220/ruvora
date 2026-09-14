@@ -79,11 +79,17 @@ async function ensureEntry(
     value.campaignId ?? "",
     value.eventId ?? "",
   ].join(":");
-  const entry = await tx.shareLink.upsert({
-    where: { canonicalKey },
-    create: { ...value, canonicalKey, slug: randomBytes(18).toString("base64url") },
-    update: {},
-  });
+  // Public profile/metadata reads reuse the immutable origin without an upsert.
+  // Concurrent first publishers converge on the canonical key; serializable
+  // conflicts retry the whole eligibility check before reading the winner.
+  let entry = await tx.shareLink.findUnique({ where: { canonicalKey } });
+  if (!entry) {
+    await tx.shareLink.createMany({
+      data: { ...value, canonicalKey, slug: randomBytes(18).toString("base64url") },
+      skipDuplicates: true,
+    });
+    entry = await tx.shareLink.findUniqueOrThrow({ where: { canonicalKey } });
+  }
   assert(entry.active, "SHARE_LINK_INACTIVE", "This share link is unavailable.", 404);
   return { slug: entry.slug, url: `/go/${entry.slug}` };
 }

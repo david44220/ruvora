@@ -11,6 +11,24 @@ export const db =
   });
 if (process.env.NODE_ENV !== "production") globalDb.ruvoraDb = db;
 export type Tx = Prisma.TransactionClient;
+function isKnownPrismaError(error: unknown): error is Prisma.PrismaClientKnownRequestError {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) return true;
+  // Bundled/ESM and generated/CommonJS runtimes can have different constructors.
+  // Accept only the known Prisma error envelope, never a bare application code.
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    error.name === "PrismaClientKnownRequestError" &&
+    "message" in error &&
+    typeof error.message === "string" &&
+    "clientVersion" in error &&
+    typeof error.clientVersion === "string" &&
+    error.clientVersion.length > 0 &&
+    "code" in error &&
+    typeof error.code === "string"
+  );
+}
 /** Every economic decision runs in the same serializable transaction, retried on conflict. */
 export async function atomic<T>(work: (tx: Tx) => Promise<T>): Promise<T> {
   for (let attempt = 0; ; attempt++) {
@@ -23,7 +41,7 @@ export async function atomic<T>(work: (tx: Tx) => Promise<T>): Promise<T> {
     } catch (error) {
       // Raw FOR UPDATE queries use P2010 in the pg adapter, with the original
       // SQLSTATE nested in driverAdapterError.cause rather than Prisma P2034.
-      if (error instanceof Prisma.PrismaClientKnownRequestError && attempt < 4) {
+      if (isKnownPrismaError(error) && attempt < 4) {
         const meta = error.meta as
           { code?: string; driverAdapterError?: { cause?: { originalCode?: string } } } | undefined;
         const sqlState = meta?.code ?? meta?.driverAdapterError?.cause?.originalCode;
