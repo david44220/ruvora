@@ -206,6 +206,29 @@ try {
       reason:
         "Development seed: independent review of a sample campaign; no real advertising claims.",
     });
+  if (!campaign.creativeBrief) {
+    await db.campaign.update({
+      where: { id: campaign.id },
+      data: {
+        creativeBrief: jsonValue({
+          headline: "Share what makes thoughtful independent design stand out",
+          talkingPoints: [
+            "Highlight craftsmanship and everyday usability in your own words",
+            "Mention the story behind Forma Studio objects",
+            "Invite your community to explore via your personal Ruvora Link",
+          ],
+          hashtags: ["#FormaStudio", "#Ruvora", "#IndependentDesign"],
+          cta: "Explore the design story",
+          formatHint: "Story, Reel, Short, or carousel post (15–45s)",
+          assetUrls: ["https://www.behance.net/"],
+        }),
+      },
+    });
+  }
+  await db.user.updateMany({
+    where: { email: { in: ["mira@ruvora.test", "leon@ruvora.test"] }, city: null, isDemo: true },
+    data: { city: "Paris" },
+  });
   for (const email of [
     "alex@ruvora.test",
     "mira@ruvora.test",

@@ -58,6 +58,13 @@ const profileSchema = z
     category: z.string().trim().max(40).default("Creator"),
     locale: z.enum(["en", "fr"]).default("en"),
     country: z.string().regex(/^[A-Z]{2}$/),
+    city: z.string().trim().max(60).optional(),
+    preferredLanguages: z
+      .array(z.enum(["fr", "en", "es", "de", "it", "pt"]))
+      .max(6)
+      .optional(),
+    autoMonetize: z.boolean().optional(),
+    profileTheme: z.enum(["obsidian", "champagne", "emerald-dusk", "amber-glow"]).optional(),
     ageEligible: z.literal(true),
     termsAccepted: z.literal(true),
     roles: z
@@ -94,6 +101,11 @@ export async function saveProfile(user: User, input: unknown) {
     );
     const current = await tx.user.findUniqueOrThrow({ where: { id: user.id } });
     const roles = [...new Set([...current.roles, ...(value.roles ?? []), "USER" as const])];
+    const nextFollowers = Math.max(0, ...value.socials.map((social) => social.followers));
+    const keepVerified =
+      current.audienceStatus === "VERIFIED" &&
+      nextFollowers <= current.followers &&
+      nextFollowers >= 10;
     const updated = await tx.user.update({
       where: { id: user.id },
       data: {
@@ -103,14 +115,20 @@ export async function saveProfile(user: User, input: unknown) {
         category: value.category,
         locale: value.locale,
         country: value.country,
+        ...(value.city !== undefined ? { city: value.city || null } : {}),
+        ...(value.preferredLanguages !== undefined
+          ? { preferredLanguages: value.preferredLanguages }
+          : {}),
+        ...(value.autoMonetize !== undefined ? { autoMonetize: value.autoMonetize } : {}),
+        ...(value.profileTheme !== undefined ? { profileTheme: value.profileTheme } : {}),
         ageEligible: true,
         termsAcceptedAt: current.termsAcceptedAt ?? new Date(),
         onboarded: true,
         roles,
         socialLinks: jsonValue(value.socials),
         customLinks: jsonValue(value.links),
-        followers: Math.max(0, ...value.socials.map((social) => social.followers)),
-        audienceStatus: "SELF_DECLARED",
+        followers: nextFollowers,
+        audienceStatus: keepVerified ? "VERIFIED" : "SELF_DECLARED",
       },
     });
     return { user: publicUser(updated) };
@@ -148,10 +166,15 @@ export async function getPublicProfile(handle: string) {
       handle: true,
       bio: true,
       category: true,
+      city: true,
+      profileTheme: true,
+      autoMonetize: true,
       socialLinks: true,
       customLinks: true,
       followers: true,
       audienceStatus: true,
+      audienceVerifiedPlatform: true,
+      audienceVerifiedAt: true,
       profileModules: true,
       isDemo: true,
       suspended: true,
@@ -165,9 +188,11 @@ export async function getPublicProfile(handle: string) {
     "This profile is not available.",
     404,
   );
-  const xp =
-    (await db.xpEntry.aggregate({ where: { userId: user.id }, _sum: { amount: true } }))._sum
-      .amount ?? 0;
+  const [activityXp, questXp] = await Promise.all([
+    db.xpEntry.aggregate({ where: { userId: user.id }, _sum: { amount: true } }),
+    db.questClaim.aggregate({ where: { userId: user.id }, _sum: { xpAwarded: true } }),
+  ]);
+  const xp = (activityXp._sum.amount ?? 0) + (questXp._sum.xpAwarded ?? 0);
   let entry: { slug: string; url: string } | null = null;
   let referralEntry: { slug: string; url: string } | null = null;
   const opportunities: {
@@ -177,25 +202,37 @@ export async function getPublicProfile(handle: string) {
     objective: string;
     isDemo: boolean;
     url: string;
+    promoCode?: string | null;
+    discountLabel?: string | null;
   }[] = [];
   const trackedEvents: Record<string, string> = {};
   try {
     entry = await getProfileEntry(handle);
-    const creator = await db.user.findUniqueOrThrow({ where: { id: user.id } });
-    const available = await listCampaigns(creator, { forCreator: true });
-    for (const campaign of available.campaigns.filter((c) => c.canParticipate).slice(0, 3)) {
-      try {
-        const link = await getCreatorCampaignEntry(handle, campaign.id);
-        opportunities.push({
-          id: campaign.id,
-          name: campaign.name,
-          description: campaign.description,
-          objective: campaign.objective,
-          isDemo: campaign.isDemo,
-          url: link.url,
-        });
-      } catch (error) {
-        if (!(error instanceof AppError)) throw error;
+    if (user.autoMonetize) {
+      const creator = await db.user.findUniqueOrThrow({ where: { id: user.id } });
+      const available = await listCampaigns(creator, { forCreator: true });
+      const activePromoCodes = await db.promoCode.findMany({
+        where: { creatorId: user.id, active: true },
+        select: { campaignId: true, code: true, discountLabel: true },
+      });
+      const promoByCampaign = new Map(activePromoCodes.map((p) => [p.campaignId, p]));
+      for (const campaign of available.campaigns.filter((c) => c.canParticipate).slice(0, 3)) {
+        try {
+          const link = await getCreatorCampaignEntry(handle, campaign.id);
+          const promo = promoByCampaign.get(campaign.id);
+          opportunities.push({
+            id: campaign.id,
+            name: campaign.name,
+            description: campaign.description,
+            objective: campaign.objective,
+            isDemo: campaign.isDemo,
+            url: link.url,
+            promoCode: promo?.code ?? null,
+            discountLabel: promo?.discountLabel ?? null,
+          });
+        } catch (error) {
+          if (!(error instanceof AppError)) throw error;
+        }
       }
     }
   } catch (error) {

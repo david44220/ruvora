@@ -1,8 +1,8 @@
 "use client";
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useRef } from "react";
-import { ArrowUpRight, Link2, Trophy, Sparkles, Users } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ArrowUpRight, BadgeCheck, Copy, Link2, Trophy, Sparkles, Users } from "lucide-react";
 import { useLocale } from "@/i18n/provider";
 import { api, minorMoney } from "@/lib/api";
 import { useResource, useAction } from "@/lib/hooks";
@@ -23,6 +23,8 @@ export interface PublicProfileData {
     objective: string;
     isDemo: boolean;
     url: string;
+    promoCode?: string | null;
+    discountLabel?: string | null;
   }[];
   trackedEvents?: Record<string, string>;
   profile: {
@@ -31,6 +33,10 @@ export interface PublicProfileData {
     handle: string;
     bio: string;
     category: string;
+    city?: string | null;
+    profileTheme?: string | null;
+    audienceStatus?: string;
+    audienceVerifiedPlatform?: string | null;
     followers: number;
     socialLinks: { platform: string; url: string; followers: number }[];
     customLinks: { title: string; url: string }[];
@@ -49,6 +55,7 @@ export function PublicProfile({
 }) {
   const { t, locale } = useLocale();
   const p = data.profile;
+  const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const tracked = useRef(false);
   useEffect(() => {
     if (tracked.current || !data.entry) return;
@@ -56,6 +63,8 @@ export function PublicProfile({
     void api("/attribution/start", { slug: data.entry.slug }).catch(() => {});
   }, [data.entry]);
   const modules = p.profileModules?.length === 5 ? p.profileModules : defaultProfileModules;
+  const isVerified = p.audienceStatus === "VERIFIED";
+  const theme = p.profileTheme || "obsidian";
   return (
     <>
       <PublicNav />
@@ -67,7 +76,7 @@ export function PublicProfile({
             loading="eager"
             sizes="(max-width: 760px) 750px, 950px"
           />
-          <article className="public-profile">
+          <article className="public-profile" data-theme={theme}>
             <div className="public-profile-cover">
               <Orb size={340} priority sizes="(max-width: 760px) 370px, 400px" />
               <span className="tag">{t("linkBrand")}</span>
@@ -84,11 +93,22 @@ export function PublicProfile({
               <p className="profile-bio">{p.bio}</p>
               <div className="profile-badge-row">
                 <span className="tag">{p.category}</span>
+                {p.city && <span className="tag">{p.city}</span>}
                 <span className="tag">
                   {p.followers.toLocaleString(locale)} · {t("followers")}
                 </span>
+                {isVerified && (
+                  <span className="tag tag-verified">
+                    <BadgeCheck size={13} />
+                    {t("p4AudienceVerifiedBadge")}
+                  </span>
+                )}
               </div>
-              <p className="field-hint">{t("selfDeclared")}</p>
+              <p className="field-hint">
+                {isVerified
+                  ? `${t("p4AudienceVerifiedBadge")}${p.audienceVerifiedPlatform ? ` · ${p.audienceVerifiedPlatform}` : ""}`
+                  : t("selfDeclared")}
+              </p>
               {modules
                 .filter((module) => module.visible)
                 .map((module) => (
@@ -146,6 +166,24 @@ export function PublicProfile({
                               </span>
                               <h3>{c.name}</h3>
                               <p>{c.description || t("p2OpportunityIntro")}</p>
+                              {c.promoCode && (
+                                <button
+                                  type="button"
+                                  className="promo-inline-pill"
+                                  onClick={() => {
+                                    void navigator.clipboard.writeText(c.promoCode!);
+                                    setCopiedCode(c.promoCode!);
+                                  }}
+                                >
+                                  <span>
+                                    {t("p4PromoCodeLabel")}: <strong>{c.promoCode}</strong>
+                                  </span>
+                                  <Copy size={13} />
+                                  {copiedCode === c.promoCode && (
+                                    <small>{t("p4PromoCopied")}</small>
+                                  )}
+                                </button>
+                              )}
                               <Link href={c.url} className="button button-small">
                                 {t("p2ExploreOpportunity")}
                                 <ArrowUpRight size={16} />

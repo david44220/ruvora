@@ -10,10 +10,12 @@ import { publicEvent } from "./events";
 import { isDevelopment } from "./environment";
 import { assert } from "./errors";
 import { consumeApproval } from "./security/approvals";
+import { getCreatorReliability } from "./risk";
 export async function getDashboard(user: User) {
   const [
     ru,
     xp,
+    questXp,
     activityCounts,
     activities,
     campaigns,
@@ -21,6 +23,9 @@ export async function getDashboard(user: User) {
     transactions,
     config,
     referralCount,
+    reliability,
+    unreadNotifications,
+    latestDistribution,
   ] = await Promise.all([
     db.rewardUnit.groupBy({
       by: ["state", "category"],
@@ -28,6 +33,7 @@ export async function getDashboard(user: User) {
       _sum: { amountMicros: true },
     }),
     db.xpEntry.aggregate({ where: { userId: user.id }, _sum: { amount: true } }),
+    db.questClaim.aggregate({ where: { userId: user.id }, _sum: { xpAwarded: true } }),
     db.activity.groupBy({ by: ["state"], where: { userId: user.id }, _count: true }),
     db.activity.findMany({
       where: { userId: user.id },
@@ -50,9 +56,16 @@ export async function getDashboard(user: User) {
     }),
     activeRules(db).catch(() => null),
     db.referral.count({ where: { inviterId: user.id } }),
+    getCreatorReliability(db, user),
+    db.notification.count({ where: { userId: user.id, readAt: null } }),
+    db.distribution.findFirst({
+      where: { state: "FINALIZED" },
+      orderBy: { finalizedAt: "desc" },
+      select: { finalizedAt: true, startAt: true, endAt: true },
+    }),
   ]);
   const threshold = config?.config.creatorFollowerThreshold ?? 10;
-  const xpTotal = xp._sum.amount ?? 0;
+  const xpTotal = (xp._sum.amount ?? 0) + (questXp._sum.xpAwarded ?? 0);
   const campaignIds = campaigns.map((campaign) => campaign.id);
   const [campaignBalances, campaignValidated] = campaignIds.length
     ? await Promise.all([
@@ -102,6 +115,13 @@ export async function getDashboard(user: User) {
         activityCounts.find((item) => item.state === "PENDING_VALIDATION")?._count ?? 0,
       referrals: referralCount,
     },
+    reliability,
+    unreadNotifications,
+    walletMeta: {
+      microPayoutThresholdMinor: "500",
+      payoutsConnected: false,
+      lastDistributionAt: latestDistribution?.finalizedAt ?? null,
+    },
     rewardUnits: ru,
     activities,
     campaigns: enrichedCampaigns,
@@ -142,6 +162,7 @@ export async function getAdmin(user: User) {
       include: {
         user: { select: { displayName: true, handle: true } },
         campaign: { select: { name: true, advertiserId: true, isDemo: true } },
+        providerConversions: { select: { decision: true, provider: true } },
       },
       take: 100,
       orderBy: { createdAt: "asc" },

@@ -16,6 +16,7 @@ import { activeRules, rulesSchema } from "./rules";
 import { idempotencyKey } from "./campaigns";
 import { currentEventPrizeExposure } from "./event-settlement";
 import { consumeApproval } from "./security/approvals";
+import { notifyUser } from "./notifications";
 const fingerprint = (payload: string) => createHash("sha256").update(payload).digest("hex");
 async function calculatePreview(
   tx: Tx,
@@ -274,6 +275,18 @@ export async function commitDistribution(admin: User, input: unknown) {
         }),
       },
     });
+    const recipientIds = new Set(
+      preview.allocations.filter((a) => a.amountMinor > 0n).map((a) => a.userId),
+    );
+    for (const userId of recipientIds) {
+      await notifyUser(tx, {
+        userId,
+        kind: "DISTRIBUTION_FINALIZED",
+        titleKey: "p4NotifDistributionFinalized",
+        bodyParams: {},
+        href: "/app/wallet",
+      });
+    }
     return { distribution: finalized };
   });
 }

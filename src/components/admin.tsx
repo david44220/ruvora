@@ -75,6 +75,36 @@ function ReviewCard({
       {kind === "activities" && (
         <>
           <p>{activity.user?.displayName}</p>
+          <div
+            className="profile-badge-row"
+            style={{ marginBlock: 8, justifyContent: "flex-start" }}
+          >
+            {(() => {
+              const score = activity.riskScore ?? 0;
+              const level = score >= 60 ? "high" : score >= 25 ? "medium" : "low";
+              const label =
+                level === "high"
+                  ? t("p4RiskHigh")
+                  : level === "medium"
+                    ? t("p4RiskMedium")
+                    : t("p4RiskLow");
+              return (
+                <span className={`tag risk-badge risk-${level}`}>
+                  {t("p4RiskScore")}: {score}/100 · {label}
+                </span>
+              );
+            })()}
+            {activity.providerConversions?.some((c) => c.decision === "VERIFIED") && (
+              <span className="tag tag-verified">{t("p4WebhookVerifiedBadge")}</span>
+            )}
+            {activity.abVariantId && <span className="tag">A/B: {activity.abVariantId}</span>}
+            {activity.promoCodeUsed && <span className="tag">{activity.promoCodeUsed}</span>}
+          </div>
+          {Array.isArray(activity.riskSignals) && activity.riskSignals.length > 0 && (
+            <p className="field-hint" style={{ marginBottom: 8 }}>
+              {activity.riskSignals.join(" · ")}
+            </p>
+          )}
           {activity.evidence && <p className="review-evidence">{activity.evidence}</p>}
         </>
       )}

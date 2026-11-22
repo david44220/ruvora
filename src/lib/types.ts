@@ -1,4 +1,18 @@
 export type Role = "USER" | "CREATOR" | "ADVERTISER" | "ADMIN";
+export type ProfileTheme = "obsidian" | "champagne" | "emerald-dusk" | "amber-glow";
+export interface CreativeBrief {
+  headline?: string;
+  talkingPoints?: string[];
+  hashtags?: string[];
+  cta?: string;
+  formatHint?: string;
+  assetUrls?: string[];
+}
+export interface AbVariant {
+  id: string;
+  label: string;
+  destinationUrl: string;
+}
 export interface User {
   id: string;
   email: string;
@@ -8,6 +22,10 @@ export interface User {
   locale: "en" | "fr";
   onboarded: boolean;
   country: string | null;
+  city?: string | null;
+  preferredLanguages?: string[];
+  autoMonetize?: boolean;
+  profileTheme?: ProfileTheme;
   bio: string | null;
   category: string | null;
   followers: number;
@@ -20,13 +38,29 @@ export interface User {
   mfaEnabledAt?: string | null;
   profileModules?: ProfileModule[];
   audienceStatus: string;
+  audienceVerifyCode?: string | null;
+  audienceVerifiedAt?: string | null;
+  audienceVerifiedPlatform?: string | null;
+  audienceVerifiedSource?: string | null;
 }
 export interface Campaign {
   canParticipate?: boolean;
   description?: string;
   allowedCountries?: string[];
+  allowedCities?: string[];
+  allowedLanguages?: string[];
+  allowedPlatforms?: string[];
   creatorCategories?: string[];
   minimumCreatorFollowers?: number;
+  maximumCreatorFollowers?: number | null;
+  requireVerifiedAudience?: boolean;
+  minimumReliabilityScore?: number;
+  deliveryMode?: "OPEN" | "UGC_BRIEF";
+  creativeBrief?: CreativeBrief | null;
+  abVariants?: AbVariant[] | null;
+  budgetRemainingPct?: number;
+  relevanceScore?: number;
+  creatorPromoCode?: { code: string; discountLabel: string; usesCount: number } | null;
   id: string;
   name: string;
   objective: string;
@@ -50,6 +84,11 @@ export interface Activity {
   state: string;
   createdAt: string;
   validatedAt?: string | null;
+  riskScore?: number;
+  riskSignals?: string[] | null;
+  abVariantId?: string | null;
+  promoCodeUsed?: string | null;
+  providerConversions?: { decision: string; provider: string }[];
   campaign: { name: string };
   user?: { displayName: string; handle?: string | null };
   ruleVersionId?: string;
@@ -94,6 +133,13 @@ export interface Transaction {
     isDemo: boolean;
   };
 }
+export interface ReliabilitySummary {
+  reliabilityScore: number;
+  tier: "EXPLORER" | "TRUSTED" | "AMBASSADOR";
+  validatedCount: number;
+  rejectedCount: number;
+  reversedCount: number;
+}
 export interface Dashboard {
   user: User;
   isDemo: boolean;
@@ -108,12 +154,19 @@ export interface Dashboard {
     pendingActivities: number;
     referrals: number;
   };
+  reliability?: ReliabilitySummary;
+  unreadNotifications?: number;
+  walletMeta?: {
+    microPayoutThresholdMinor: string;
+    payoutsConnected: boolean;
+    lastDistributionAt: string | null;
+  };
   rewardUnits: { state: string; category: string; _sum: { amountMicros: string } }[];
   activities: Activity[];
   campaigns: Campaign[];
   events: RuvoraEvent[];
   transactions: Transaction[];
-  eligibility: { followerThreshold: number; creatorEligible: boolean };
+  eligibility: { followerThreshold: number; creatorEligible: boolean; audienceStatus?: string };
   fundingEnabled: boolean;
 }
 export interface EventDetail {

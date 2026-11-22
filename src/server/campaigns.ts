@@ -8,11 +8,37 @@ import { activeRules, minor } from "./rules";
 import { assertEligible } from "./profiles";
 import { safeUrl } from "./validation";
 import { evaluatePersistedPolicy } from "../domains/policy";
-import { campaignRegionAllowed, canCreatorPromote } from "./campaign-eligibility";
+import {
+  campaignRegionAllowed,
+  canCreatorPromote,
+  campaignRelevanceScore,
+} from "./campaign-eligibility";
 import { isDevelopment } from "./environment";
+import { notifyUser } from "./notifications";
+import { getCreatorReliability } from "./risk";
 const positiveMinor = minor.refine((v) => v > 0n, "Amount must be positive.");
 export const idempotencyKey = z.string().regex(/^[a-zA-Z0-9:_-]{8,100}$/);
 export const reason = z.string().trim().min(10).max(500);
+const creativeBriefSchema = z
+  .object({
+    headline: z.string().trim().max(120).default(""),
+    talkingPoints: z.array(z.string().trim().min(1).max(160)).max(6).default([]),
+    hashtags: z.array(z.string().trim().min(1).max(40)).max(10).default([]),
+    cta: z.string().trim().max(80).default(""),
+    formatHint: z.string().trim().max(80).default(""),
+    assetUrls: z.array(safeUrl).max(5).default([]),
+  })
+  .strict();
+const abVariantSchema = z
+  .object({
+    id: z
+      .string()
+      .trim()
+      .regex(/^[a-zA-Z0-9_-]{1,24}$/),
+    label: z.string().trim().min(1).max(60),
+    destinationUrl: safeUrl,
+  })
+  .strict();
 const campaignSchema = z
   .object({
     name: z.string().trim().min(3).max(80),
@@ -38,6 +64,18 @@ const campaignSchema = z
       .default([]),
     creatorCategories: z.array(z.string().trim().min(1).max(40)).max(20).default([]),
     minimumCreatorFollowers: z.number().int().min(0).max(1000000000).default(0),
+    maximumCreatorFollowers: z.number().int().min(0).max(1000000000).nullable().optional(),
+    allowedCities: z.array(z.string().trim().min(1).max(60)).max(50).default([]),
+    allowedLanguages: z
+      .array(z.enum(["fr", "en", "es", "de", "it", "pt"]))
+      .max(10)
+      .default([]),
+    allowedPlatforms: z.array(z.string().trim().min(1).max(30)).max(10).default([]),
+    requireVerifiedAudience: z.boolean().default(false),
+    minimumReliabilityScore: z.number().int().min(0).max(100).default(0),
+    deliveryMode: z.enum(["OPEN", "UGC_BRIEF"]).default("OPEN"),
+    creativeBrief: creativeBriefSchema.nullable().optional(),
+    abVariants: z.array(abVariantSchema).max(4).nullable().optional(),
     frequencyCap: z.number().int().min(1).max(10).default(3),
   })
   .strict();
@@ -48,6 +86,13 @@ export async function createCampaign(user: User, input: unknown) {
     value.unitCostMinor <= value.dailyBudgetMinor && value.dailyBudgetMinor <= value.budgetMinor,
     "INVALID_BUDGET",
     "Unit cost must fit the daily and total campaign budgets.",
+  );
+  assert(
+    value.maximumCreatorFollowers === null ||
+      value.maximumCreatorFollowers === undefined ||
+      value.maximumCreatorFollowers >= value.minimumCreatorFollowers,
+    "VALIDATION_ERROR",
+    "Maximum followers must be greater than or equal to minimum followers.",
   );
   const startAt = new Date(value.startAt),
     endAt = new Date(value.endAt);
@@ -78,8 +123,17 @@ export async function createCampaign(user: User, input: unknown) {
         "Linked campaigns must belong to an authorized event and fit its participation window.",
       );
     }
+    const { creativeBrief, abVariants, maximumCreatorFollowers, ...rest } = value;
     const campaign = await tx.campaign.create({
-      data: { ...value, startAt, endAt, advertiserId: user.id },
+      data: {
+        ...rest,
+        maximumCreatorFollowers: maximumCreatorFollowers ?? null,
+        ...(creativeBrief ? { creativeBrief: jsonValue(creativeBrief) } : {}),
+        ...(abVariants && abVariants.length > 0 ? { abVariants: jsonValue(abVariants) } : {}),
+        startAt,
+        endAt,
+        advertiserId: user.id,
+      },
     });
     await account(tx, `campaign:${campaign.id}`, "CAMPAIGN_ESCROW", { campaignId: campaign.id });
     await tx.auditLog.create({
@@ -322,6 +376,14 @@ export async function reviewCampaign(admin: User, campaignId: string, input: unk
         details: value,
       },
     });
+    await notifyUser(tx, {
+      userId: campaign.advertiserId,
+      kind: value.decision === "APPROVE" ? "CAMPAIGN_APPROVED" : "CAMPAIGN_REJECTED",
+      titleKey:
+        value.decision === "APPROVE" ? "p4NotifCampaignApproved" : "p4NotifCampaignRejected",
+      bodyParams: { campaign: campaign.name },
+      href: "/app/advertiser",
+    });
     return { campaign: updated };
   });
 }
@@ -378,11 +440,101 @@ export async function transitionCampaign(user: User, campaignId: string, input: 
     return { campaign: updated };
   });
 }
+
+const estimateSchema = z
+  .object({
+    allowedCountries: z
+      .array(z.string().regex(/^[A-Z]{2}$/))
+      .max(250)
+      .default([]),
+    allowedCities: z.array(z.string().trim().min(1).max(60)).max(50).default([]),
+    allowedLanguages: z
+      .array(z.enum(["fr", "en", "es", "de", "it", "pt"]))
+      .max(10)
+      .default([]),
+    allowedPlatforms: z.array(z.string().trim().min(1).max(30)).max(10).default([]),
+    creatorCategories: z.array(z.string().trim().min(1).max(40)).max(20).default([]),
+    minimumCreatorFollowers: z.number().int().min(0).max(1000000000).default(0),
+    maximumCreatorFollowers: z.number().int().min(0).max(1000000000).nullable().optional(),
+    requireVerifiedAudience: z.boolean().default(false),
+    minimumReliabilityScore: z.number().int().min(0).max(100).default(0),
+    budgetMinor: positiveMinor.optional(),
+    unitCostMinor: positiveMinor.optional(),
+  })
+  .strict();
+
+export async function estimateCampaignAudience(user: User, input: unknown) {
+  requireRole(user, "ADVERTISER");
+  const criteria = estimateSchema.parse(input);
+  const candidates = await db.user.findMany({
+    where: {
+      onboarded: true,
+      suspended: false,
+      economicHold: false,
+      id: { not: user.id },
+      ...(isDevelopment() ? {} : { isDemo: false }),
+    },
+    select: {
+      id: true,
+      roles: true,
+      followers: true,
+      category: true,
+      country: true,
+      city: true,
+      preferredLanguages: true,
+      socialLinks: true,
+      audienceStatus: true,
+      emailVerifiedAt: true,
+      suspended: true,
+      economicHold: true,
+    },
+    take: 500,
+  });
+
+  const matchingParticipants = candidates.filter((candidate) =>
+    campaignRegionAllowed(candidate, criteria),
+  );
+  const creatorCandidates = matchingParticipants.filter((candidate) =>
+    canCreatorPromote(candidate, criteria),
+  );
+
+  let matchingCreators = creatorCandidates;
+  if (criteria.minimumReliabilityScore > 0 && creatorCandidates.length > 0) {
+    const scored = await Promise.all(
+      creatorCandidates.map(async (creator) => ({
+        creator,
+        reliability: await getCreatorReliability(db, creator),
+      })),
+    );
+    matchingCreators = scored
+      .filter((row) => row.reliability.reliabilityScore >= criteria.minimumReliabilityScore)
+      .map((row) => row.creator);
+  }
+
+  const verifiedCreators = matchingCreators.filter((c) => c.audienceStatus === "VERIFIED").length;
+  const totalFollowersReach = matchingCreators.reduce((sum, c) => sum + c.followers, 0);
+  const estimatedMaxActions =
+    criteria.budgetMinor && criteria.unitCostMinor && criteria.unitCostMinor > 0n
+      ? Number(criteria.budgetMinor / criteria.unitCostMinor)
+      : null;
+
+  return {
+    matchingCreators: matchingCreators.length,
+    verifiedCreators,
+    matchingParticipants: matchingParticipants.length,
+    totalFollowersReach,
+    estimatedMaxActions,
+  };
+}
+
 export async function listCampaigns(
   user?: User | null,
   options: { forCreator?: boolean; objective?: string; category?: string } = {},
 ) {
-  const rule = user ? await activeRules(db).catch(() => null) : null;
+  const [rule, reliability] = await Promise.all([
+    user ? activeRules(db).catch(() => null) : Promise.resolve(null),
+    user && options.forCreator ? getCreatorReliability(db, user) : Promise.resolve(null),
+  ]);
   const campaigns = await db.campaign.findMany({
     where: user?.roles.includes("ADVERTISER")
       ? { OR: [{ advertiserId: user.id }, { state: "ACTIVE" }] }
@@ -400,7 +552,11 @@ export async function listCampaigns(
         !campaignRegionAllowed(user, campaign))
     )
       return false;
-    if (options.forCreator && (!user || !canCreatorPromote(user, campaign))) return false;
+    if (
+      options.forCreator &&
+      (!user || !canCreatorPromote(user, campaign, reliability?.reliabilityScore))
+    )
+      return false;
     if (options.objective && campaign.objective !== options.objective) return false;
     if (
       options.category &&
@@ -412,7 +568,7 @@ export async function listCampaigns(
   });
   const campaignIds = filtered.map((campaign) => campaign.id);
   const accountIds = campaignIds.map((id) => `campaign:${id}`);
-  const [balances, validatedCounts] = campaignIds.length
+  const [balances, validatedCounts, creatorPromoCodes] = campaignIds.length
     ? await Promise.all([
         db.ledgerEntry.groupBy({
           by: ["accountId"],
@@ -424,41 +580,71 @@ export async function listCampaigns(
           where: { campaignId: { in: campaignIds }, state: "VALIDATED" },
           _count: true,
         }),
+        user?.roles.includes("CREATOR")
+          ? db.promoCode.findMany({
+              where: { creatorId: user.id, campaignId: { in: campaignIds }, active: true },
+              select: { campaignId: true, code: true, discountLabel: true, usesCount: true },
+            })
+          : Promise.resolve([]),
       ])
-    : [[], []];
+    : [[], [], []];
   const balanceMap = new Map(balances.map((row) => [row.accountId, row._sum.amountMinor ?? 0n]));
   const countMap = new Map(validatedCounts.map((row) => [row.campaignId, row._count]));
+  const promoMap = new Map(creatorPromoCodes.map((row) => [row.campaignId, row]));
   const now = new Date();
-  return {
-    campaigns: filtered.map((campaign) => {
-      const remainingMinor = balanceMap.get(`campaign:${campaign.id}`) ?? 0n;
-      const canParticipate =
-        campaign.state === "ACTIVE" &&
-        campaign.startAt <= now &&
-        campaign.endAt > now &&
-        remainingMinor >= campaign.unitCostMinor &&
-        campaign.advertiserId !== user?.id;
-      if (campaign.advertiserId === user?.id || user?.roles.includes("ADMIN"))
-        return {
-          ...campaign,
-          remainingMinor,
-          canParticipate,
-          validatedCount: countMap.get(campaign.id) ?? 0,
-        };
+  const mapped = filtered.map((campaign) => {
+    const remainingMinor = balanceMap.get(`campaign:${campaign.id}`) ?? 0n;
+    const budgetRemainingPct =
+      campaign.budgetMinor > 0n
+        ? Math.max(0, Math.min(100, Number((remainingMinor * 100n) / campaign.budgetMinor)))
+        : 0;
+    const relevanceScore = campaignRelevanceScore(user, campaign);
+    const canParticipate =
+      campaign.state === "ACTIVE" &&
+      campaign.startAt <= now &&
+      campaign.endAt > now &&
+      remainingMinor >= campaign.unitCostMinor &&
+      campaign.advertiserId !== user?.id;
+    const creatorPromoCode = promoMap.get(campaign.id) ?? null;
+    if (campaign.advertiserId === user?.id || user?.roles.includes("ADMIN"))
       return {
-        id: campaign.id,
-        name: campaign.name,
-        description: campaign.description,
-        objective: campaign.objective,
-        destinationUrl: campaign.destinationUrl,
-        state: campaign.state,
-        startAt: campaign.startAt,
-        endAt: campaign.endAt,
-        eventId: campaign.eventId,
-        event: campaign.event,
-        isDemo: campaign.isDemo,
+        ...campaign,
+        remainingMinor,
+        budgetRemainingPct,
+        relevanceScore,
         canParticipate,
+        creatorPromoCode,
+        validatedCount: countMap.get(campaign.id) ?? 0,
       };
-    }),
-  };
+    return {
+      id: campaign.id,
+      name: campaign.name,
+      description: campaign.description,
+      objective: campaign.objective,
+      deliveryMode: campaign.deliveryMode,
+      destinationUrl: campaign.destinationUrl,
+      creativeBrief: campaign.creativeBrief,
+      abVariants: campaign.abVariants,
+      allowedCountries: campaign.allowedCountries,
+      allowedCities: campaign.allowedCities,
+      allowedLanguages: campaign.allowedLanguages,
+      allowedPlatforms: campaign.allowedPlatforms,
+      creatorCategories: campaign.creatorCategories,
+      minimumCreatorFollowers: campaign.minimumCreatorFollowers,
+      maximumCreatorFollowers: campaign.maximumCreatorFollowers,
+      requireVerifiedAudience: campaign.requireVerifiedAudience,
+      state: campaign.state,
+      startAt: campaign.startAt,
+      endAt: campaign.endAt,
+      eventId: campaign.eventId,
+      event: campaign.event,
+      isDemo: campaign.isDemo,
+      budgetRemainingPct,
+      relevanceScore,
+      creatorPromoCode,
+      canParticipate,
+    };
+  });
+  mapped.sort((a, b) => b.relevanceScore - a.relevanceScore);
+  return { campaigns: mapped };
 }

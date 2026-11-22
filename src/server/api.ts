@@ -21,6 +21,7 @@ import {
 import { getPublicProfile, saveProfile, saveProfileModules } from "./profiles";
 import {
   createCampaign,
+  estimateCampaignAudience,
   fundCampaign,
   listCampaigns,
   reviewCampaign,
@@ -77,6 +78,19 @@ import {
 import { listWebhookEvents, retryWebhook } from "./webhooks";
 import { isDevelopment, validateRuntimeEnvironment } from "./environment";
 import { safeReturnTo } from "../lib/navigation";
+import { listQuests, claimQuest } from "./quests";
+import { listNotifications, markNotificationsRead } from "./notifications";
+import { beginAudienceVerification, confirmAudienceVerification } from "./audience-verify";
+import { createPromoCode, listCreatorPromoCodes } from "./promo-codes";
+import {
+  getAdvertiserIntegration,
+  rotateAdvertiserIntegrationKey,
+  triggerDevTestConversion,
+  listWorkspaceMembers,
+  addWorkspaceMember,
+  removeWorkspaceMember,
+} from "./integrations";
+import { exportAdvertiserAnalyticsCsv, exportWalletCsv } from "./export";
 export async function readJson(request: Request): Promise<unknown> {
   assert(
     request.headers.get("content-type")?.split(";")[0] === "application/json",
@@ -117,6 +131,18 @@ export function response(value: unknown, requestId: string, status = 200) {
       },
     },
   );
+}
+function csvResponse(csv: string, filename: string, requestId: string) {
+  return new NextResponse(csv, {
+    status: 200,
+    headers: {
+      "content-type": "text/csv; charset=utf-8",
+      "content-disposition": `attachment; filename="${filename}"`,
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+      "x-request-id": requestId,
+    },
+  });
 }
 export async function handleApi(request: NextRequest, path: string[]) {
   const requestId = randomUUID();
@@ -186,6 +212,23 @@ export async function handleApi(request: NextRequest, path: string[]) {
         return response(await getCreatorAnalytics(await requireUser()), requestId);
       if (route === "analytics/advertiser")
         return response(await getAdvertiserAnalytics(await requireUser()), requestId);
+      if (route === "analytics/advertiser/export") {
+        const csv = await exportAdvertiserAnalyticsCsv(await requireUser());
+        return csvResponse(csv, "ruvora-advertiser-analytics.csv", requestId);
+      }
+      if (route === "wallet/export") {
+        const csv = await exportWalletCsv(await requireUser());
+        return csvResponse(csv, "ruvora-wallet-statement.csv", requestId);
+      }
+      if (route === "quests") return response(await listQuests(await requireUser()), requestId);
+      if (route === "notifications")
+        return response(await listNotifications(await requireUser()), requestId);
+      if (route === "promo-codes")
+        return response(await listCreatorPromoCodes(await requireUser()), requestId);
+      if (route === "advertiser/integrations")
+        return response(await getAdvertiserIntegration(await requireUser()), requestId);
+      if (route === "advertiser/team")
+        return response(await listWorkspaceMembers(await requireUser()), requestId);
       if (route === "admin/growth") {
         const user = await requireUser();
         if (!isDevelopment()) await requireAdminMfaSession(user, sessionToken);
@@ -292,6 +335,25 @@ export async function handleApi(request: NextRequest, path: string[]) {
       if (route === "shares") return response(await createShareLink(user, input), requestId, 201);
       if (route === "profile/modules")
         return response(await saveProfileModules(user, input), requestId);
+      if (route === "profile/audience/begin")
+        return response(await beginAudienceVerification(user, input), requestId);
+      if (route === "profile/audience/confirm")
+        return response(await confirmAudienceVerification(user, input), requestId);
+      if (route === "quests/claim") return response(await claimQuest(user, input), requestId);
+      if (route === "notifications/read")
+        return response(await markNotificationsRead(user, input), requestId);
+      if (route === "promo-codes")
+        return response(await createPromoCode(user, input), requestId, 201);
+      if (route === "campaigns/estimate")
+        return response(await estimateCampaignAudience(user, input), requestId);
+      if (route === "advertiser/integrations/rotate")
+        return response(await rotateAdvertiserIntegrationKey(user), requestId);
+      if (route === "advertiser/integrations/test")
+        return response(await triggerDevTestConversion(user, input), requestId);
+      if (route === "advertiser/team")
+        return response(await addWorkspaceMember(user, input), requestId, 201);
+      if (route === "advertiser/team/remove")
+        return response(await removeWorkspaceMember(user, input), requestId);
       if (route === "security/email/request")
         return response(await requestEmailVerification(user), requestId);
       if (route === "security/password/change")

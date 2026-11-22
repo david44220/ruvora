@@ -126,6 +126,20 @@ model User {
   emailVerifiedAt              DateTime?
   mfaEnabledAt                 DateTime?
   profileModules               Json                 @default("[]")
+  city                         String?
+  preferredLanguages           String[]             @default(["fr", "en"])
+  autoMonetize                 Boolean              @default(true)
+  profileTheme                 String               @default("obsidian")
+  audienceVerifyCode           String?
+  audienceVerifiedAt           DateTime?
+  audienceVerifiedPlatform     String?
+  audienceVerifiedSource       String?
+  questClaims                  QuestClaim[]
+  promoCodes                   PromoCode[]
+  notifications                Notification[]
+  advertiserIntegration        AdvertiserIntegration?
+  ownedWorkspaceMembers        WorkspaceMember[]    @relation("WorkspaceOwner")
+  workspaceMemberships         WorkspaceMember[]    @relation("WorkspaceMemberUser")
 }
 
 model Session {
@@ -181,6 +195,16 @@ model Campaign {
   allowedCountries        String[]             @default([])
   creatorCategories       String[]             @default([])
   minimumCreatorFollowers Int                  @default(0)
+  deliveryMode            String               @default("OPEN")
+  maximumCreatorFollowers Int?
+  allowedCities           String[]             @default([])
+  allowedLanguages        String[]             @default([])
+  allowedPlatforms        String[]             @default([])
+  requireVerifiedAudience Boolean              @default(false)
+  minimumReliabilityScore Int                  @default(0)
+  creativeBrief           Json?
+  abVariants              Json?
+  promoCodes              PromoCode[]
 
   @@index([state, startAt, endAt])
   @@index([advertiserId, createdAt])
@@ -215,6 +239,10 @@ model Activity {
   requestFingerprint  String?
   attribution         AttributionContext?  @relation(fields: [attributionId], references: [id], onDelete: Restrict)
   referralCredit      ReferralCredit?
+  riskScore           Int                  @default(0)
+  riskSignals         Json?
+  abVariantId         String?
+  promoCodeUsed       String?
 
   @@index([campaignId, userId, createdAt])
   @@index([state, createdAt])
@@ -746,4 +774,71 @@ model ProviderConversion {
   @@unique([provider, externalId])
   @@unique([provider, activityId])
   @@index([activityId, campaignId])
+}
+
+model QuestClaim {
+  id        String   @id @default(cuid())
+  userId    String
+  questCode String
+  xpAwarded Int
+  claimedAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, questCode])
+  @@index([userId, claimedAt])
+}
+
+model PromoCode {
+  id            String   @id @default(cuid())
+  code          String   @unique
+  creatorId     String
+  campaignId    String
+  discountLabel String   @default("")
+  active        Boolean  @default(true)
+  usesCount     Int      @default(0)
+  createdAt     DateTime @default(now())
+  creator       User     @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  campaign      Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([creatorId, campaignId])
+  @@index([campaignId, active])
+}
+
+model Notification {
+  id         String    @id @default(cuid())
+  userId     String
+  kind       String
+  titleKey   String
+  bodyParams Json      @default("{}")
+  href       String?
+  readAt     DateTime?
+  createdAt  DateTime  @default(now())
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt, createdAt])
+}
+
+model AdvertiserIntegration {
+  id               String   @id @default(cuid())
+  advertiserId     String   @unique
+  keyPrefix        String
+  sealedSigningKey String
+  signingKeyDigest String
+  lastRotatedAt    DateTime @default(now())
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  advertiser       User     @relation(fields: [advertiserId], references: [id], onDelete: Cascade)
+}
+
+model WorkspaceMember {
+  id        String   @id @default(cuid())
+  ownerId   String
+  memberId  String
+  role      String
+  createdAt DateTime @default(now())
+  owner     User     @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  member    User     @relation("WorkspaceMemberUser", fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerId, memberId])
+  @@index([memberId])
 }

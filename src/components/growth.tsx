@@ -57,11 +57,18 @@ type AdvertiserAnalyticsData = {
     grossSpendMinor: string;
     reversedSpendMinor: string;
     netSpendMinor: string;
+    ecpcMinor?: string;
+    cpaMinor?: string | null;
     advertiserRuMicros: string;
   };
+  daily?: { date: string; validatedActions: number; spendMinor: string }[];
+  byCountry?: { country: string; validatedActions: number; spendMinor: string }[];
+  byPlatform?: { platform: string; validatedActions: number; spendMinor: string }[];
+  byVariant?: { variantId: string; validatedActions: number; spendMinor: string }[];
   campaigns: {
     id: string;
     name: string;
+    deliveryMode?: string;
     validatedActions: number;
     rejectedActions: number;
     spendMinor: string;
@@ -336,14 +343,40 @@ export function AdvertiserAnalytics() {
   const result = useResource<AdvertiserAnalyticsData>("/analytics/advertiser");
   if (result.loading) return <Loading />;
   if (!result.data) return <Notice error message={t("unavailable")} />;
-  const { summary: s, campaigns, creators } = result.data;
+  const {
+    summary: s,
+    campaigns,
+    creators,
+    daily = [],
+    byCountry = [],
+    byPlatform = [],
+    byVariant = [],
+  } = result.data;
   const total = s.validatedActions + s.rejectedActions;
+  const maxDaily = Math.max(1, ...daily.map((d) => d.validatedActions));
   return (
     <section className="admin-section">
-      <h2>{t("p2ByCampaign")}</h2>
+      <div className="panel-header">
+        <h2>{t("p2ByCampaign")}</h2>
+        <a
+          className="button button-small button-secondary"
+          href="/api/analytics/advertiser/export"
+          download
+        >
+          {t("p4RoiExportCsv")}
+          <ArrowUpRight size={15} />
+        </a>
+      </div>
       <div className="stats-grid">
         <Stat label={t("p2MediaSpend")} value={minorMoney(s.netSpendMinor, locale)} />
         <Stat label={t("p2Validated")} value={s.validatedActions} />
+        <Stat
+          label={t("p4RoiEcpc")}
+          value={s.validatedActions ? minorMoney(s.ecpcMinor || "0", locale) : "—"}
+        />
+        <Stat label={t("p4RoiCpa")} value={s.cpaMinor ? minorMoney(s.cpaMinor, locale) : "—"} />
+      </div>
+      <div className="stats-grid">
         <Stat
           label={t("p2InvalidRate")}
           value={
@@ -353,7 +386,97 @@ export function AdvertiserAnalytics() {
           }
         />
         <Stat label={t("p2Conversions")} value={s.conversions} />
+        <Stat label={t("campaigns")} value={s.campaigns} />
+        <Stat
+          label={t("advertiserRU")}
+          value={ruNumber(s.advertiserRuMicros, locale)}
+          hint={t("noCashValue")}
+        />
       </div>
+      {daily.length > 0 && (
+        <div className="panel admin-section">
+          <div className="panel-header">
+            <h3>{t("p4RoiDailyTitle")}</h3>
+            <span className="tag">
+              {daily.length} {t(daily.length === 1 ? "p2DaySingular" : "p2Days")}
+            </span>
+          </div>
+          <div
+            className="visits-chart"
+            role="img"
+            aria-label={`${t("p4RoiDailyTitle")}: ${s.validatedActions}`}
+          >
+            {daily.map((day) => (
+              <div
+                className="visits-bar"
+                key={day.date}
+                title={`${day.date}: ${day.validatedActions} · ${minorMoney(day.spendMinor, locale)}`}
+              >
+                <span style={{ height: `${(day.validatedActions / maxDaily) * 100}%` }} />
+                <small>{new Date(day.date).getUTCDate()}</small>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {(byCountry.length > 0 || byPlatform.length > 0 || byVariant.length > 0) && (
+        <div className="metric-card-list admin-section">
+          {byCountry.length > 0 && (
+            <article className="panel metric-card">
+              <h3>{t("p4RoiByCountry")}</h3>
+              <div className="allocation-list">
+                {byCountry.slice(0, 5).map((row) => (
+                  <div key={row.country}>
+                    <span>
+                      {row.country}
+                      <small>
+                        {row.validatedActions} · {t("p2Validated")}
+                      </small>
+                    </span>
+                    <strong>{minorMoney(row.spendMinor, locale)}</strong>
+                  </div>
+                ))}
+              </div>
+            </article>
+          )}
+          {byPlatform.length > 0 && (
+            <article className="panel metric-card">
+              <h3>{t("p4RoiByPlatform")}</h3>
+              <div className="allocation-list">
+                {byPlatform.slice(0, 5).map((row) => (
+                  <div key={row.platform}>
+                    <span>
+                      {row.platform}
+                      <small>
+                        {row.validatedActions} · {t("p2Validated")}
+                      </small>
+                    </span>
+                    <strong>{minorMoney(row.spendMinor, locale)}</strong>
+                  </div>
+                ))}
+              </div>
+            </article>
+          )}
+          {byVariant.length > 0 && (
+            <article className="panel metric-card">
+              <h3>{t("p4RoiByVariant")}</h3>
+              <div className="allocation-list">
+                {byVariant.slice(0, 5).map((row) => (
+                  <div key={row.variantId}>
+                    <span>
+                      {row.variantId}
+                      <small>
+                        {row.validatedActions} · {t("p2Validated")}
+                      </small>
+                    </span>
+                    <strong>{minorMoney(row.spendMinor, locale)}</strong>
+                  </div>
+                ))}
+              </div>
+            </article>
+          )}
+        </div>
+      )}
       <div className="metric-card-list">
         {campaigns.map((c) => (
           <article className="panel metric-card" key={c.id}>
