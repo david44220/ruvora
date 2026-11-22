@@ -18,6 +18,8 @@ import { useResource, useAction } from "@/lib/hooks";
 import { PageTitle, Stat } from "./workspace-ui";
 import { Notice, Empty, Loading, Eyebrow } from "./ui";
 import { useDashboard } from "./app-context";
+import { ReferralViralKitPanel } from "./pass06-promote";
+import { channelLabel } from "@/lib/social-channels";
 
 type CreatorAnalyticsData = {
   isDemo: boolean;
@@ -37,6 +39,15 @@ type CreatorAnalyticsData = {
     moneyAllocatedMinor: string;
   };
   daily: { date: string; visits: number; starts: number; validatedActions: number }[];
+  byChannel?: {
+    channel: string;
+    visits: number;
+    sessions: number;
+    registrations: number;
+    validatedActions: number;
+    conversionRatePct: number;
+    creatorRuMicros: string;
+  }[];
   campaigns: {
     id: string;
     name: string;
@@ -64,6 +75,7 @@ type AdvertiserAnalyticsData = {
   daily?: { date: string; validatedActions: number; spendMinor: string }[];
   byCountry?: { country: string; validatedActions: number; spendMinor: string }[];
   byPlatform?: { platform: string; validatedActions: number; spendMinor: string }[];
+  bySocialChannel?: { channel: string; validatedActions: number; spendMinor: string }[];
   byVariant?: { variantId: string; validatedActions: number; spendMinor: string }[];
   campaigns: {
     id: string;
@@ -321,6 +333,29 @@ export function CreatorAnalytics() {
         )}
       </section>
       <section className="panel admin-section">
+        <h3>{t("p6ChannelAnalyticsTitle")}</h3>
+        {result.data.byChannel && result.data.byChannel.length > 0 ? (
+          <div className="allocation-list">
+            {result.data.byChannel.map((row) => (
+              <div key={row.channel}>
+                <span>
+                  {channelLabel(row.channel, locale)}
+                  <small>
+                    {row.visits} {t("p6ColClicks")} · {row.validatedActions} {t("p2Validated")} (
+                    {row.conversionRatePct}%)
+                  </small>
+                </span>
+                <strong>
+                  {ruNumber(row.creatorRuMicros, locale)} {t("ruUnit")}
+                </strong>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <Empty>{t("p6NoChannelData")}</Empty>
+        )}
+      </section>
+      <section className="panel admin-section">
         <h3>{t("p2Allocations")}</h3>
         {allocations.length ? (
           <div className="allocation-list">
@@ -350,6 +385,7 @@ export function AdvertiserAnalytics() {
     daily = [],
     byCountry = [],
     byPlatform = [],
+    bySocialChannel = [],
     byVariant = [],
   } = result.data;
   const total = s.validatedActions + s.rejectedActions;
@@ -419,7 +455,10 @@ export function AdvertiserAnalytics() {
           </div>
         </div>
       )}
-      {(byCountry.length > 0 || byPlatform.length > 0 || byVariant.length > 0) && (
+      {(byCountry.length > 0 ||
+        byPlatform.length > 0 ||
+        bySocialChannel.length > 0 ||
+        byVariant.length > 0) && (
         <div className="metric-card-list admin-section">
           {byCountry.length > 0 && (
             <article className="panel metric-card">
@@ -447,6 +486,24 @@ export function AdvertiserAnalytics() {
                   <div key={row.platform}>
                     <span>
                       {row.platform}
+                      <small>
+                        {row.validatedActions} · {t("p2Validated")}
+                      </small>
+                    </span>
+                    <strong>{minorMoney(row.spendMinor, locale)}</strong>
+                  </div>
+                ))}
+              </div>
+            </article>
+          )}
+          {bySocialChannel.length > 0 && (
+            <article className="panel metric-card">
+              <h3>{t("p6ChannelAnalyticsTitle")}</h3>
+              <div className="allocation-list">
+                {bySocialChannel.slice(0, 5).map((row) => (
+                  <div key={row.channel}>
+                    <span>
+                      {channelLabel(row.channel, locale)}
                       <small>
                         {row.validatedActions} · {t("p2Validated")}
                       </small>
@@ -596,6 +653,7 @@ export function ReferralsScreen() {
         <TrackedShare surface="REFERRAL" />
         <p className="field-hint">{t("p2DirectOnly")}</p>
       </section>
+      <ReferralViralKitPanel handle={data?.user.handle ?? null} />
     </>
   );
 }

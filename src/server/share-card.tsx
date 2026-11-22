@@ -5,17 +5,60 @@ import { join } from "node:path";
 import { db } from "./db";
 import { messages } from "../i18n/messages";
 import { isDevelopment } from "./environment";
+import { encodeQr } from "../lib/qr";
+import { getCreatorCampaignEntry, getProfileEntry, getReferralEntry } from "./attribution";
+import { AppError } from "./errors";
+
 const art = readFile(join(process.cwd(), "public/assets/share/ruvora-orb-card.png")).then(
   (buffer) => "data:image/png;base64," + buffer.toString("base64"),
 );
-export async function renderShareCard(kind: string, slug: string, language: string | null) {
+
+export interface ShareCardOptions {
+  format?: string | null;
+  campaignId?: string | null;
+  download?: boolean;
+}
+
+function cardDimensions(format?: string | null): {
+  mode: "banner" | "square" | "story";
+  width: number;
+  height: number;
+} {
+  if (format === "story") return { mode: "story", width: 1080, height: 1920 };
+  if (format === "square") return { mode: "square", width: 1080, height: 1080 };
+  return { mode: "banner", width: 1200, height: 630 };
+}
+
+function safeOrigin(): string {
+  const raw = process.env.APP_URL || "http://localhost:3000";
+  try {
+    return new URL(raw).origin;
+  } catch {
+    return "http://localhost:3000";
+  }
+}
+
+export async function renderShareCard(
+  kind: string,
+  slug: string,
+  language: string | null,
+  options: ShareCardOptions = {},
+) {
   const locale = language === "fr" ? "fr" : "en";
   const t = messages[locale];
-  let title = "",
-    subtitle = "",
-    eyebrow: string = t.linkBrand;
+  const dim = cardDimensions(options.format);
+
+  let title = "";
+  let subtitle = "";
+  let eyebrow: string = t.linkBrand;
+  let badge = "";
+  let promoCode = "";
+  let handleLine = "";
+  let qrTargetUrl = "";
+  let partnerTag = "";
   let demo = false;
-  if (kind === "profile" || kind === "milestone") {
+
+  if (kind === "profile" || kind === "milestone" || kind === "promo" || kind === "referral") {
     const profile = await db.user.findUnique({
       where: { handle: slug },
       select: {
@@ -23,22 +66,116 @@ export async function renderShareCard(kind: string, slug: string, language: stri
         displayName: true,
         bio: true,
         handle: true,
+        category: true,
+        audienceStatus: true,
         suspended: true,
         isDemo: true,
       },
     });
     if (!profile || profile.suspended || (!isDevelopment() && profile.isDemo))
       return new Response(null, { status: 404 });
+
     title = profile.displayName;
-    subtitle = profile.bio ?? "@" + profile.handle;
+    subtitle = profile.bio || "@" + profile.handle;
+    handleLine = `@${profile.handle}`;
     demo = profile.isDemo;
+    if (profile.audienceStatus === "VERIFIED") badge = t.p6CardVerified;
+
     if (kind === "milestone") {
-      const xp =
-        (await db.xpEntry.aggregate({ where: { userId: profile.id }, _sum: { amount: true } }))._sum
-          .amount ?? 0;
+      const [actXp, questXp] = await Promise.all([
+        db.xpEntry.aggregate({ where: { userId: profile.id }, _sum: { amount: true } }),
+        db.questClaim.aggregate({ where: { userId: profile.id }, _sum: { xpAwarded: true } }),
+      ]);
+      const xp = (actXp._sum.amount ?? 0) + (questXp._sum.xpAwarded ?? 0);
       if (xp < 100) return new Response(null, { status: 404 });
       eyebrow = t.progression;
       subtitle = `${t.p2Level} ${Math.floor(Math.sqrt(xp / 100)) + 1} · ${xp} ${t.xpUnit}`;
+    } else if (kind === "referral") {
+      eyebrow = t.p2Referrals.toUpperCase();
+      title = t.p6CardReferralTitle;
+      subtitle = `${profile.displayName} (@${profile.handle}) · ${t.p6CardReferralSub}`;
+      try {
+        const entry = await getReferralEntry(
+          profile.handle!,
+          dim.mode === "story" ? "INSTAGRAM_STORY" : "DIRECT",
+        );
+        qrTargetUrl = `${safeOrigin()}${entry.url}`;
+      } catch (error) {
+        if (!(error instanceof AppError)) throw error;
+        qrTargetUrl = `${safeOrigin()}/r/${profile.handle}`;
+      }
+    } else if (kind === "promo") {
+      eyebrow = t.p6CardPartnerBadge;
+      partnerTag = t.p6CardPartnerBadge;
+      let matchedCampaign: {
+        id: string;
+        name: string;
+        description: string;
+        isDemo: boolean;
+        creativeBrief: unknown;
+      } | null = null;
+      if (options.campaignId) {
+        const c = await db.campaign.findUnique({
+          where: { id: options.campaignId },
+          select: {
+            id: true,
+            name: true,
+            description: true,
+            state: true,
+            isDemo: true,
+            creativeBrief: true,
+          },
+        });
+        if (c && c.state === "ACTIVE" && (isDevelopment() || !c.isDemo)) {
+          matchedCampaign = c;
+        }
+      }
+      if (matchedCampaign) {
+        const brief = matchedCampaign.creativeBrief as { headline?: string } | null;
+        title = matchedCampaign.name;
+        subtitle = brief?.headline || matchedCampaign.description || profile.bio || "";
+        demo = demo || matchedCampaign.isDemo;
+        const codeRow = await db.promoCode.findUnique({
+          where: {
+            creatorId_campaignId: { creatorId: profile.id, campaignId: matchedCampaign.id },
+          },
+          select: { code: true, active: true },
+        });
+        if (codeRow?.active) promoCode = codeRow.code;
+        try {
+          const entry = await getCreatorCampaignEntry(
+            profile.handle!,
+            matchedCampaign.id,
+            dim.mode === "story" ? "INSTAGRAM_STORY" : "DIRECT",
+          );
+          qrTargetUrl = `${safeOrigin()}${entry.url}`;
+        } catch (error) {
+          if (!(error instanceof AppError)) throw error;
+          qrTargetUrl = `${safeOrigin()}/@${profile.handle}`;
+        }
+      } else {
+        try {
+          const entry = await getProfileEntry(
+            profile.handle!,
+            dim.mode === "story" ? "INSTAGRAM_STORY" : "DIRECT",
+          );
+          qrTargetUrl = `${safeOrigin()}${entry.url}`;
+        } catch (error) {
+          if (!(error instanceof AppError)) throw error;
+          qrTargetUrl = `${safeOrigin()}/@${profile.handle}`;
+        }
+      }
+    } else if (dim.mode !== "banner") {
+      try {
+        const entry = await getProfileEntry(
+          profile.handle!,
+          dim.mode === "story" ? "INSTAGRAM_STORY" : "DIRECT",
+        );
+        qrTargetUrl = `${safeOrigin()}${entry.url}`;
+      } catch (error) {
+        if (!(error instanceof AppError)) throw error;
+        qrTargetUrl = `${safeOrigin()}/@${profile.handle}`;
+      }
     }
   } else if (kind === "event") {
     const event = await db.event.findUnique({ where: { slug } });
@@ -59,7 +196,358 @@ export async function renderShareCard(kind: string, slug: string, language: stri
     subtitle = localized[locale]?.description || event.description;
     eyebrow = t.eventTag;
     demo = event.isDemo;
-  } else return new Response(null, { status: 404 });
+  } else {
+    return new Response(null, { status: 404 });
+  }
+
+  let qr: ReturnType<typeof encodeQr> | null = null;
+  if (qrTargetUrl) {
+    try {
+      qr = encodeQr(qrTargetUrl);
+    } catch {
+      qr = null;
+    }
+  }
+
+  const artSrc = await art;
+  const safeSlug = slug.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 32) || "card";
+  const headers: Record<string, string> = {
+    "cache-control": "public, max-age=60, s-maxage=300",
+    "x-content-type-options": "nosniff",
+  };
+  if (options.download) {
+    headers["content-disposition"] =
+      `attachment; filename="ruvora-${kind}-${safeSlug}-${dim.mode}.png"`;
+  }
+
+  // Vertical 9:16 Story / TikTok / Reels layout (1080 x 1920)
+  if (dim.mode === "story") {
+    return new ImageResponse(
+      <div
+        style={{
+          width: 1080,
+          height: 1920,
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "space-between",
+          background: "#0b0a09",
+          color: "#f4f0e8",
+          padding: "88px 76px",
+          position: "relative",
+          fontFamily: "sans-serif",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            right: -210,
+            top: 180,
+            width: 740,
+            height: 740,
+            opacity: 0.56,
+            display: "flex",
+          }}
+        >
+          <img alt="" src={artSrc} width={740} height={740} />
+        </div>
+
+        {/* Header */}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            width: "100%",
+          }}
+        >
+          <div style={{ display: "flex", fontSize: 34, letterSpacing: 9, color: "#edbd89" }}>
+            RUVORA
+          </div>
+          {badge ? (
+            <div
+              style={{
+                display: "flex",
+                fontSize: 20,
+                letterSpacing: 2,
+                color: "#0b0a09",
+                background: "#edbd89",
+                padding: "10px 22px",
+                borderRadius: 999,
+                fontWeight: 700,
+              }}
+            >
+              {badge}
+            </div>
+          ) : null}
+        </div>
+
+        {/* Core Hero Copy */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 26, maxWidth: 660 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <div
+              style={{
+                display: "flex",
+                fontSize: 22,
+                letterSpacing: 4,
+                color: "#edbd89",
+              }}
+            >
+              {eyebrow}
+            </div>
+            {partnerTag && partnerTag !== eyebrow ? (
+              <div
+                style={{
+                  display: "flex",
+                  fontSize: 18,
+                  color: "#c7bfb4",
+                  border: "1px solid rgba(237,189,137,0.45)",
+                  padding: "6px 14px",
+                  borderRadius: 999,
+                }}
+              >
+                {partnerTag}
+              </div>
+            ) : null}
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              fontSize: title.length > 36 ? 64 : 78,
+              lineHeight: 1.06,
+              letterSpacing: -2,
+              fontWeight: 700,
+            }}
+          >
+            {title.slice(0, 72)}
+          </div>
+
+          {handleLine ? (
+            <div style={{ display: "flex", fontSize: 30, color: "#edbd89" }}>{handleLine}</div>
+          ) : null}
+
+          <div style={{ display: "flex", fontSize: 29, lineHeight: 1.4, color: "#c7bfb4" }}>
+            {subtitle.slice(0, 170)}
+          </div>
+
+          {promoCode ? (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 20,
+                marginTop: 18,
+                padding: "24px 34px",
+                borderRadius: 24,
+                background: "rgba(237,189,137,0.14)",
+                border: "2px solid #edbd89",
+                alignSelf: "flex-start",
+              }}
+            >
+              <div style={{ display: "flex", fontSize: 24, color: "#edbd89", letterSpacing: 3 }}>
+                {t.p6CardPromoCodePrefix}
+              </div>
+              <div style={{ display: "flex", fontSize: 44, fontWeight: 700, letterSpacing: 4 }}>
+                {promoCode}
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        {/* Bottom QR + Disclosure */}
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 28,
+            width: "100%",
+          }}
+        >
+          {qr ? (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 34,
+                padding: "30px 34px",
+                borderRadius: 28,
+                background: "rgba(244,240,232,0.06)",
+                border: "1px solid rgba(237,189,137,0.3)",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  padding: 16,
+                  borderRadius: 20,
+                  background: "#f4f0e8",
+                }}
+              >
+                <svg width={210} height={210} viewBox={qr.viewBox}>
+                  <rect width="100%" height="100%" fill="#f4f0e8" />
+                  <path d={qr.svgPath} fill="#0b0a09" />
+                </svg>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ display: "flex", fontSize: 30, fontWeight: 700, color: "#f4f0e8" }}>
+                  {t.p6CardScanCta}
+                </div>
+                <div style={{ display: "flex", fontSize: 22, color: "#edbd89" }}>
+                  {handleLine || "ruvora"}
+                </div>
+              </div>
+            </div>
+          ) : null}
+          <div style={{ display: "flex", fontSize: 20, color: "#9c9388" }}>
+            {demo ? t.development : t.heroDisclaimer}
+          </div>
+        </div>
+      </div>,
+      { width: 1080, height: 1920, headers },
+    );
+  }
+
+  // Square 1:1 Feed Post layout (1080 x 1080)
+  if (dim.mode === "square") {
+    return new ImageResponse(
+      <div
+        style={{
+          width: 1080,
+          height: 1080,
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "space-between",
+          background: "#0b0a09",
+          color: "#f4f0e8",
+          padding: "64px 68px",
+          position: "relative",
+          fontFamily: "sans-serif",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            right: -175,
+            top: 64,
+            width: 540,
+            height: 540,
+            opacity: 0.56,
+            display: "flex",
+          }}
+        >
+          <img alt="" src={artSrc} width={540} height={540} />
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            width: "100%",
+          }}
+        >
+          <div style={{ display: "flex", fontSize: 28, letterSpacing: 8, color: "#edbd89" }}>
+            RUVORA
+          </div>
+          {badge ? (
+            <div
+              style={{
+                display: "flex",
+                fontSize: 18,
+                color: "#0b0a09",
+                background: "#edbd89",
+                padding: "8px 18px",
+                borderRadius: 999,
+                fontWeight: 700,
+              }}
+            >
+              {badge}
+            </div>
+          ) : null}
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 18, maxWidth: 600 }}>
+          <div style={{ display: "flex", fontSize: 20, letterSpacing: 4, color: "#edbd89" }}>
+            {eyebrow}
+          </div>
+          <div
+            style={{
+              display: "flex",
+              fontSize: title.length > 36 ? 54 : 68,
+              lineHeight: 1.06,
+              letterSpacing: -2,
+              fontWeight: 700,
+            }}
+          >
+            {title.slice(0, 72)}
+          </div>
+          <div style={{ display: "flex", fontSize: 24, lineHeight: 1.38, color: "#c7bfb4" }}>
+            {subtitle.slice(0, 145)}
+          </div>
+          {promoCode ? (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 16,
+                marginTop: 8,
+                padding: "14px 24px",
+                borderRadius: 18,
+                background: "rgba(237,189,137,0.14)",
+                border: "2px solid #edbd89",
+                alignSelf: "flex-start",
+              }}
+            >
+              <div style={{ display: "flex", fontSize: 19, color: "#edbd89", letterSpacing: 3 }}>
+                {t.p6CardPromoCodePrefix}
+              </div>
+              <div style={{ display: "flex", fontSize: 32, fontWeight: 700, letterSpacing: 3 }}>
+                {promoCode}
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "flex-end",
+            width: "100%",
+          }}
+        >
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 680 }}>
+            {handleLine ? (
+              <div style={{ display: "flex", fontSize: 24, color: "#edbd89" }}>{handleLine}</div>
+            ) : null}
+            <div style={{ display: "flex", fontSize: 17, color: "#9c9388" }}>
+              {demo ? t.development : t.heroDisclaimer}
+            </div>
+          </div>
+          {qr ? (
+            <div
+              style={{
+                display: "flex",
+                padding: 12,
+                borderRadius: 16,
+                background: "#f4f0e8",
+              }}
+            >
+              <svg width={156} height={156} viewBox={qr.viewBox}>
+                <rect width="100%" height="100%" fill="#f4f0e8" />
+                <path d={qr.svgPath} fill="#0b0a09" />
+              </svg>
+            </div>
+          ) : null}
+        </div>
+      </div>,
+      { width: 1080, height: 1080, headers },
+    );
+  }
+
+  // Classic 1200 x 630 Open Graph / X / LinkedIn banner (default)
   return new ImageResponse(
     <div
       style={{
@@ -83,7 +571,7 @@ export async function renderShareCard(kind: string, slug: string, language: stri
           display: "flex",
         }}
       >
-        <img alt="" src={await art} width={630} height={630} />
+        <img alt="" src={artSrc} width={630} height={630} />
       </div>
       <div
         style={{
@@ -98,13 +586,13 @@ export async function renderShareCard(kind: string, slug: string, language: stri
           RUVORA
         </div>
         <div style={{ display: "flex", flexDirection: "column" }}>
-          <div style={{ display: "flex", fontSize: 19, color: "#edbd89", marginBottom: 20 }}>
+          <div style={{ display: "flex", fontSize: 19, color: "#edbd89", marginBottom: 18 }}>
             {eyebrow}
           </div>
           <div
             style={{
               display: "flex",
-              fontSize: title.length > 45 ? 54 : 70,
+              fontSize: title.length > 45 ? 50 : 66,
               lineHeight: 1.05,
               letterSpacing: -3,
               maxWidth: 660,
@@ -115,28 +603,61 @@ export async function renderShareCard(kind: string, slug: string, language: stri
           <div
             style={{
               display: "flex",
-              fontSize: 24,
+              fontSize: 23,
               lineHeight: 1.4,
-              marginTop: 24,
+              marginTop: 20,
               color: "#c7bfb4",
               maxWidth: 565,
             }}
           >
             {subtitle.slice(0, 150)}
           </div>
+          {promoCode ? (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 14,
+                marginTop: 18,
+                padding: "10px 20px",
+                borderRadius: 14,
+                background: "rgba(237,189,137,0.14)",
+                border: "1px solid #edbd89",
+                alignSelf: "flex-start",
+              }}
+            >
+              <div style={{ display: "flex", fontSize: 16, color: "#edbd89" }}>
+                {t.p6CardPromoCodePrefix}
+              </div>
+              <div style={{ display: "flex", fontSize: 24, fontWeight: 700, letterSpacing: 2 }}>
+                {promoCode}
+              </div>
+            </div>
+          ) : null}
         </div>
         <div style={{ display: "flex", fontSize: 16, color: "#c7bfb4" }}>
           {demo ? t.development : t.heroDisclaimer}
         </div>
       </div>
+      {qr ? (
+        <div
+          style={{
+            position: "absolute",
+            right: 48,
+            bottom: 44,
+            display: "flex",
+            padding: 10,
+            borderRadius: 16,
+            background: "#f4f0e8",
+          }}
+        >
+          <svg width={132} height={132} viewBox={qr.viewBox}>
+            <rect width="100%" height="100%" fill="#f4f0e8" />
+            <path d={qr.svgPath} fill="#0b0a09" />
+          </svg>
+        </div>
+      ) : null}
     </div>,
-    {
-      width: 1200,
-      height: 630,
-      headers: {
-        "cache-control": "public, max-age=60, s-maxage=300",
-        "x-content-type-options": "nosniff",
-      },
-    },
+    { width: 1200, height: 630, headers },
   );
 }

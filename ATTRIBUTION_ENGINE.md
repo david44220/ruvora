@@ -45,3 +45,12 @@ The retentionDays policy is captured for operational planning; automated telemet
 The Chromium creator-acquisition journey in `tests/e2e/attribution.spec.ts` passed: public profile issues inaccessible-to-JavaScript attribution cookies, a funded featured opportunity survives signup/onboarding navigation, the activity request carries no creator identifier, pending activity creates no RU, independent administrator UI review produces actual creator RU, analytics updates, money remains unchanged before distribution, and the settled 390px layout fits the viewport. This is local development browser evidence, not live provider or production certification.
 
 The separate share-entry concurrency suite adds four PostgreSQL scenarios for simultaneous first publication, repeated public-profile requests, revocation and holds. Canonical lookup reads existing entries before attempting a unique-key insert; it never revives a revoked entry. Tests assert stable IDs/slugs, no duplicate attribution contexts or RU, and unchanged warm-row xmin. Common transaction retry detection covers real Prisma CommonJS/ESM identities.
+
+## Pass 06 social-channel attribution & promotion telemetry
+
+Migration `202611220010_pass06_social_promotion` adds `socialChannel` (default `DIRECT`) to `ShareLink`, `AttributionContext`, and `GrowthEvent`, plus `CreatorShowcaseItem` for curated recommendations on `/@handle`.
+
+- Creating a share link with an explicit `socialChannel` (`INSTAGRAM_STORY`, `INSTAGRAM_BIO`, `TIKTOK`, `YOUTUBE`, `WHATSAPP`, `SNAPCHAT`, `X`, `DISCORD`, `THREADS`, `LINKEDIN`, `WEB_EMBED`) derives a distinct deterministic `canonicalKey` per channel while keeping legacy `DIRECT` canonical keys unchanged.
+- `startAttribution` copies `ShareLink.socialChannel` immutably onto `AttributionContext` and every associated `GrowthEvent` (`PROFILE_VIEW`, `SHARE_VISIT`, `ATTRIBUTED_SESSION`, `CAMPAIGN_START`, `REGISTRATION`, `EVENT_JOIN`) without altering `Activity.attributionSnapshot` or weakening existing provenance guards.
+- `POST /api/promote/track-share` records deduplicated daily `SOCIAL_KIT_SHARED` telemetry events strictly for observability and XP-only social quests; sharing alone never mints Money, RU, or Event Points.
+- Creator analytics (`byChannel`) and advertiser analytics (`bySocialChannel`) aggregate visits, attributed sessions, registrations, validated actions, conversion rates, and persisted CREATOR RU per social network.

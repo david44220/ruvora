@@ -14,6 +14,7 @@ export default async function AppPage({
     (section?.length || 0) > 1 ||
     ![
       "overview",
+      "promote",
       "creator",
       "advertiser",
       "opportunities",

@@ -11,6 +11,9 @@ import { establishDirectReferral } from "./referrals";
 import { canCreatorPromote } from "./campaign-eligibility";
 import { balance } from "./ledger";
 import { isDevelopment } from "./environment";
+import { SOCIAL_CHANNELS, type SocialChannel } from "../lib/social-channels";
+
+const socialChannelSchema = z.enum(SOCIAL_CHANNELS).default("DIRECT");
 
 export interface AttributionTokens {
   attributionToken?: string;
@@ -62,6 +65,7 @@ async function ensureEntry(
     campaignId?: string;
     eventId?: string;
     source: "CREATOR_PROFILE" | "CREATOR_LINK" | "REFERRAL" | "EVENT" | "CAMPAIGN" | "SHARE_LINK";
+    socialChannel?: SocialChannel;
     isDemo: boolean;
   },
 ) {
@@ -71,29 +75,37 @@ async function ensureEntry(
     "Development share links are unavailable outside development.",
     403,
   );
-  const canonicalKey = [
+  const channel: SocialChannel = value.socialChannel ?? "DIRECT";
+  const baseParts = [
     value.source,
     value.ownerId,
     value.creatorId ?? "",
     value.referrerId ?? "",
     value.campaignId ?? "",
     value.eventId ?? "",
-  ].join(":");
+  ];
+  const canonicalKey =
+    channel === "DIRECT" ? baseParts.join(":") : [...baseParts, channel].join(":");
   // Public profile/metadata reads reuse the immutable origin without an upsert.
   // Concurrent first publishers converge on the canonical key; serializable
   // conflicts retry the whole eligibility check before reading the winner.
   let entry = await tx.shareLink.findUnique({ where: { canonicalKey } });
   if (!entry) {
     await tx.shareLink.createMany({
-      data: { ...value, canonicalKey, slug: randomBytes(18).toString("base64url") },
+      data: {
+        ...value,
+        socialChannel: channel,
+        canonicalKey,
+        slug: randomBytes(18).toString("base64url"),
+      },
       skipDuplicates: true,
     });
     entry = await tx.shareLink.findUniqueOrThrow({ where: { canonicalKey } });
   }
   assert(entry.active, "SHARE_LINK_INACTIVE", "This share link is unavailable.", 404);
-  return { slug: entry.slug, url: `/go/${entry.slug}` };
+  return { slug: entry.slug, url: `/go/${entry.slug}`, socialChannel: entry.socialChannel };
 }
-export async function getProfileEntry(handle: string) {
+export async function getProfileEntry(handle: string, socialChannel: SocialChannel = "DIRECT") {
   return atomic(async (tx) => {
     const creator = await tx.user.findUnique({ where: { handle } });
     assert(creator, "PROFILE_NOT_FOUND", "Profile not found.", 404);
@@ -102,11 +114,16 @@ export async function getProfileEntry(handle: string) {
       ownerId: creator.id,
       creatorId: creator.id,
       source: "CREATOR_PROFILE",
+      socialChannel,
       isDemo: creator.isDemo,
     });
   });
 }
-export async function getCreatorCampaignEntry(handle: string, campaignId: string) {
+export async function getCreatorCampaignEntry(
+  handle: string,
+  campaignId: string,
+  socialChannel: SocialChannel = "DIRECT",
+) {
   return atomic(async (tx) => {
     const campaign = await tx.campaign.findUnique({ where: { id: campaignId } });
     const creator = await tx.user.findUnique({ where: { handle } });
@@ -126,6 +143,7 @@ export async function getCreatorCampaignEntry(handle: string, campaignId: string
       campaignId,
       eventId: campaign.eventId ?? undefined,
       source: "CREATOR_LINK",
+      socialChannel,
       isDemo: creator.isDemo || campaign.isDemo,
     });
   });
@@ -156,9 +174,11 @@ export async function createShareLink(user: User, input: unknown) {
     .object({
       surface: z.enum(["PROFILE", "EVENT", "CAMPAIGN", "REFERRAL"]),
       targetId: z.string().min(1).max(100).optional(),
+      socialChannel: socialChannelSchema.optional(),
     })
     .strict()
     .parse(input);
+  const socialChannel: SocialChannel = value.socialChannel ?? "DIRECT";
   if (value.surface === "PROFILE") {
     assert(
       !value.targetId || value.targetId === user.id,
@@ -167,7 +187,7 @@ export async function createShareLink(user: User, input: unknown) {
       403,
     );
     assert(user.handle, "PROFILE_NOT_FOUND", "Create a public profile first.");
-    return getProfileEntry(user.handle);
+    return getProfileEntry(user.handle, socialChannel);
   }
   return atomic(async (tx) => {
     const actor = await tx.user.findUniqueOrThrow({ where: { id: user.id } });
@@ -188,6 +208,7 @@ export async function createShareLink(user: User, input: unknown) {
         creatorId,
         referrerId: actor.id,
         source: "REFERRAL",
+        socialChannel,
         isDemo: actor.isDemo,
       });
     assert(value.targetId, "TARGET_REQUIRED", "Choose a share destination.");
@@ -204,12 +225,14 @@ export async function createShareLink(user: User, input: unknown) {
         creatorId,
         eventId: event.id,
         source: "EVENT",
+        socialChannel,
         isDemo: actor.isDemo || event.isDemo,
       });
       const share = await tx.shareLink.findUniqueOrThrow({ where: { slug: result.slug } });
       await recordGrowth(tx, {
         dedupeKey: `share-published:${share.id}`,
         type: "EVENT_SHARE",
+        socialChannel,
         shareLinkId: share.id,
         creatorId,
         userId: actor.id,
@@ -234,6 +257,7 @@ export async function createShareLink(user: User, input: unknown) {
       campaignId: campaign.id,
       eventId: campaign.eventId ?? undefined,
       source: "CAMPAIGN",
+      socialChannel,
       isDemo: actor.isDemo || campaign.isDemo,
     });
   });
@@ -243,6 +267,7 @@ export async function recordGrowth(
   data: {
     dedupeKey: string;
     type: string;
+    socialChannel?: string;
     attributionId?: string;
     shareLinkId?: string;
     creatorId?: string;
@@ -252,7 +277,11 @@ export async function recordGrowth(
     isDemo: boolean;
   },
 ) {
-  return tx.growthEvent.upsert({ where: { dedupeKey: data.dedupeKey }, create: data, update: {} });
+  return tx.growthEvent.upsert({
+    where: { dedupeKey: data.dedupeKey },
+    create: { ...data, socialChannel: data.socialChannel ?? "DIRECT" },
+    update: {},
+  });
 }
 export async function loadAttribution(
   tx: Tx,
@@ -388,6 +417,7 @@ export async function startAttribution(
           campaignId: previous.campaignId,
           eventId: previous.eventId,
           source: previous.source,
+          socialChannel: previous.socialChannel,
           ruleVersion: previous.ruleVersion,
           policySnapshot: jsonValue({
             ...z.record(z.string(), z.json()).parse(previous.policySnapshot),
@@ -428,6 +458,7 @@ export async function startAttribution(
       await recordGrowth(tx, {
         dedupeKey: `visit:${attributionSessionKey(existing)}:${entry.id}`,
         type: entry.source === "CREATOR_PROFILE" ? "PROFILE_VIEW" : "SHARE_VISIT",
+        socialChannel: entry.socialChannel,
         attributionId: existing.id,
         shareLinkId: entry.id,
         creatorId: entry.creatorId ?? undefined,
@@ -462,6 +493,7 @@ export async function startAttribution(
         campaignId: entry.campaignId,
         eventId: entry.eventId,
         source: entry.source,
+        socialChannel: entry.socialChannel,
         ruleVersion: `${record.version}:${config.attribution.version}`,
         policySnapshot: jsonValue({ attribution: config.attribution, referral: config.referral }),
         firstTouchAt: now,
@@ -475,6 +507,7 @@ export async function startAttribution(
     await recordGrowth(tx, {
       dedupeKey: `session:${context.id}`,
       type: "ATTRIBUTED_SESSION",
+      socialChannel: entry.socialChannel,
       attributionId: context.id,
       shareLinkId: entry.id,
       creatorId: context.creatorId ?? undefined,
@@ -486,6 +519,7 @@ export async function startAttribution(
     await recordGrowth(tx, {
       dedupeKey: `visit:${context.id}:${entry.id}`,
       type: entry.source === "CREATOR_PROFILE" ? "PROFILE_VIEW" : "SHARE_VISIT",
+      socialChannel: entry.socialChannel,
       attributionId: context.id,
       shareLinkId: entry.id,
       creatorId: context.creatorId ?? undefined,
@@ -572,6 +606,7 @@ export async function bindAttribution(
       await recordGrowth(tx, {
         dedupeKey: `registration:${user.id}`,
         type: "REGISTRATION",
+        socialChannel: context.socialChannel,
         attributionId: context.id,
         shareLinkId: context.shareLinkId,
         creatorId: context.creatorId ?? undefined,
@@ -748,6 +783,7 @@ export async function recordEventJoin(
   await recordGrowth(tx, {
     dedupeKey: `event-join:${eventId}:${userId}`,
     type: "EVENT_JOIN",
+    socialChannel: context?.socialChannel ?? "DIRECT",
     attributionId: context?.id,
     shareLinkId: context?.shareLinkId,
     creatorId: context?.creatorId ?? undefined,
@@ -818,10 +854,10 @@ async function availableCampaign(tx: Tx, campaign: Campaign) {
   );
 }
 /** Legacy referral URLs resolve the eligible public account to the same opaque server entry. */
-export async function getReferralEntry(handle: string) {
+export async function getReferralEntry(handle: string, socialChannel: SocialChannel = "DIRECT") {
   const user = await db.user.findUnique({ where: { handle } });
   assert(user, "PROFILE_NOT_FOUND", "Profile not found.", 404);
-  return createShareLink(user, { surface: "REFERRAL" });
+  return createShareLink(user, { surface: "REFERRAL", socialChannel });
 }
 
 async function recordCampaignEntryStart(
@@ -834,6 +870,7 @@ async function recordCampaignEntryStart(
   await recordGrowth(tx, {
     dedupeKey: `campaign-start:${attributionSessionKey(context)}:${campaignId}`,
     type: "CAMPAIGN_START",
+    socialChannel: context.socialChannel,
     attributionId: context.id,
     shareLinkId: context.shareLinkId,
     creatorId: context.creatorId ?? undefined,

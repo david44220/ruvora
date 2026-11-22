@@ -29,3 +29,7 @@ REFERRAL RU participate only in the configurable referral category of a reviewed
 ## Evidence and limitations
 
 The pure referral engine and ancestry helpers have unit coverage. Attribution integration tests exercise zero signup rewards, one qualifying credit, exact amount, concurrent recipient caps, no capacity reset after reversal, administrator conflict, referrer holds, immutability and actual analytics. No live identity, payout, email or ad provider certification is claimed. See SECURITY.md, FRAUD_AND_RISK.md, LEDGER.md and RELEASE_REPORT.md for deployment and verification limits.
+
+## Pass 06 transparent direct-referral funnel & viral sharing kit
+
+`GET /api/referrals/funnel` (`getReferralFunnel`) surfaces single-level referral observability (direct invites, published profiles, active referees, validated referral credits, persisted `REFERRAL` RU, and captured monthly caps) on `/app/referrals` alongside a downloadable 9:16 invitation card (`/share-card/referral/[handle]?format=story`) and viral creator CTA on `/@handle` and `/embed/[handle]`. All Pass 02 economic invariants remain unchanged: sharing and registration award zero money and zero RU.

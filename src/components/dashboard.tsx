@@ -23,6 +23,7 @@ import {
   Zap,
   Users,
   Link2,
+  Megaphone,
 } from "lucide-react";
 import { useLocale } from "@/i18n/provider";
 import { type MessageKey } from "@/i18n/messages";
@@ -48,6 +49,7 @@ import {
   EmbeddableWidgetCard,
   WalletPayoutsAndStatementPanel,
 } from "./pass05-creator";
+import { PromoteHubScreen } from "./pass06-promote";
 import { CreatorAnalytics, ReferralsScreen } from "./growth";
 import { EventStudio } from "./event-studio";
 import { SecurityScreen } from "./security";
@@ -75,6 +77,7 @@ export function AppShell({
   const resource = useResource<Dashboard>("/dashboard");
   const nav: [string, MessageKey, ReactNode, boolean][] = [
     ["/app", "overview", <LayoutDashboard key="o" />, true],
+    ["/app/promote", "p6NavPromote", <Megaphone key="pr" />, true],
     ["/app/creator", "creatorStudio", <Fingerprint key="c" />, user.roles.includes("CREATOR")],
     ["/app/advertiser", "campaignManager", <Aperture key="a" />, user.roles.includes("ADVERTISER")],
     ["/app/opportunities", "opportunities", <Compass key="p" />, true],
@@ -202,9 +205,14 @@ function OverviewScreen({ data, reload }: { data: Dashboard; reload: () => Promi
           <Eyebrow>{t("nextStep")}</Eyebrow>
           <h2>{t("nextTitle")}</h2>
           <p>{t("nextDescription")}</p>
-          <ButtonLink href="/app/opportunities" small>
-            {t("opportunities")}
-          </ButtonLink>
+          <div className="form-actions">
+            <ButtonLink href="/app/promote" small>
+              {t("p6PromoteCtaOverview")}
+            </ButtonLink>
+            <ButtonLink href="/app/opportunities" small secondary>
+              {t("opportunities")}
+            </ButtonLink>
+          </div>
         </div>
         <div className="quick-profile">
           <div className="quick-profile-top">
@@ -468,6 +476,7 @@ export function DashboardScreen({
   const { data, reload } = useDashboard();
   const { t } = useLocale();
   if (!data) return null;
+  if (screen === "promote") return <PromoteHubScreen onProfileUpdated={() => void reload()} />;
   if (screen === "event-studio") return <EventStudio />;
   if (screen === "security") return <SecurityScreen />;
   if (screen === "referrals") return <ReferralsScreen />;

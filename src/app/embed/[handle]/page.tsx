@@ -59,6 +59,16 @@ export default async function EmbedProfilePage({
           >
             {m.p5EmbedVisitProfile} ↗
           </Link>
+          {data.referralEntry && (
+            <Link
+              href={data.referralEntry.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="button button-small button-secondary"
+            >
+              {m.p6EmbedJoinCta}
+            </Link>
+          )}
         </div>
       </article>
     </main>

@@ -26,6 +26,20 @@ export interface PublicProfileData {
     promoCode?: string | null;
     discountLabel?: string | null;
   }[];
+  showcase?: {
+    id: string;
+    campaignId: string;
+    collectionName: string;
+    creatorNote: string;
+    name: string;
+    description: string;
+    objective: string;
+    disclosureNote: string;
+    isDemo: boolean;
+    url: string;
+    promoCode?: string | null;
+    discountLabel?: string | null;
+  }[];
   trackedEvents?: Record<string, string>;
   profile: {
     profileModules?: ProfileModule[];
@@ -65,6 +79,17 @@ export function PublicProfile({
   const modules = p.profileModules?.length === 5 ? p.profileModules : defaultProfileModules;
   const isVerified = p.audienceStatus === "VERIFIED";
   const theme = p.profileTheme || "obsidian";
+  const showcaseItems = data.showcase ?? [];
+  const showcasedCampaignIds = new Set(showcaseItems.map((item) => item.campaignId));
+  const extraOpportunities = (data.opportunities ?? []).filter(
+    (c) => !showcasedCampaignIds.has(c.id),
+  );
+  const showcaseGroups = new Map<string, typeof showcaseItems>();
+  for (const item of showcaseItems) {
+    const bucket = showcaseGroups.get(item.collectionName) ?? [];
+    bucket.push(item);
+    showcaseGroups.set(item.collectionName, bucket);
+  }
   return (
     <>
       <PublicNav />
@@ -157,42 +182,104 @@ export function PublicProfile({
                       ))}
                     {module.type === "OPPORTUNITY" && data.entry && (
                       <div className="featured-opportunities">
-                        <Eyebrow>{t("p2Opportunity")}</Eyebrow>
-                        {data.opportunities?.length ? (
-                          data.opportunities.map((c) => (
-                            <article className="profile-opportunity" key={c.id}>
-                              <span className="tag">
-                                {t(("objective" + c.objective) as MessageKey)}
-                              </span>
-                              <h3>{c.name}</h3>
-                              <p>{c.description || t("p2OpportunityIntro")}</p>
-                              {c.promoCode && (
-                                <button
-                                  type="button"
-                                  className="promo-inline-pill"
-                                  onClick={() => {
-                                    void navigator.clipboard.writeText(c.promoCode!);
-                                    setCopiedCode(c.promoCode!);
-                                  }}
-                                >
-                                  <span>
-                                    {t("p4PromoCodeLabel")}: <strong>{c.promoCode}</strong>
+                        {showcaseItems.length > 0 && (
+                          <div className="public-showcase-wrap">
+                            <Eyebrow>{t("p6PublicShowcaseEyebrow")}</Eyebrow>
+                            {[...showcaseGroups.entries()].map(([collection, items]) => (
+                              <div key={collection} className="public-showcase-group">
+                                <h3 className="public-showcase-heading">{collection}</h3>
+                                {items.map((item) => (
+                                  <article className="profile-opportunity" key={item.id}>
+                                    <div className="profile-badge-row">
+                                      <span className="tag">{t("p6PublicPartnerTag")}</span>
+                                      <span className="tag">
+                                        {t(("objective" + item.objective) as MessageKey)}
+                                      </span>
+                                    </div>
+                                    <h3>{item.name}</h3>
+                                    {item.creatorNote ? (
+                                      <p className="public-creator-note">
+                                        <strong>{t("p6PublicCreatorNoteLabel")}:</strong>{" "}
+                                        {item.creatorNote}
+                                      </p>
+                                    ) : (
+                                      <p>{item.description || t("p2OpportunityIntro")}</p>
+                                    )}
+                                    {item.promoCode && (
+                                      <button
+                                        type="button"
+                                        className="promo-inline-pill"
+                                        onClick={() => {
+                                          void navigator.clipboard.writeText(item.promoCode!);
+                                          setCopiedCode(item.promoCode!);
+                                        }}
+                                      >
+                                        <span>
+                                          {t("p4PromoCodeLabel")}: <strong>{item.promoCode}</strong>
+                                        </span>
+                                        <Copy size={13} />
+                                        {copiedCode === item.promoCode && (
+                                          <small>{t("p4PromoCopied")}</small>
+                                        )}
+                                      </button>
+                                    )}
+                                    <Link href={item.url} className="button button-small">
+                                      {t("p2ExploreOpportunity")}
+                                      <ArrowUpRight size={16} />
+                                    </Link>
+                                    {item.disclosureNote && <small>{item.disclosureNote}</small>}
+                                    {item.isDemo && <small>{t("development")}</small>}
+                                  </article>
+                                ))}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {extraOpportunities.length > 0 && (
+                          <>
+                            <Eyebrow>{t("p2Opportunity")}</Eyebrow>
+                            {extraOpportunities.map((c) => (
+                              <article className="profile-opportunity" key={c.id}>
+                                <div className="profile-badge-row">
+                                  <span className="tag">{t("p6PublicPartnerTag")}</span>
+                                  <span className="tag">
+                                    {t(("objective" + c.objective) as MessageKey)}
                                   </span>
-                                  <Copy size={13} />
-                                  {copiedCode === c.promoCode && (
-                                    <small>{t("p4PromoCopied")}</small>
-                                  )}
-                                </button>
-                              )}
-                              <Link href={c.url} className="button button-small">
-                                {t("p2ExploreOpportunity")}
-                                <ArrowUpRight size={16} />
-                              </Link>
-                              {c.isDemo && <small>{t("development")}</small>}
-                            </article>
-                          ))
-                        ) : (
-                          <p className="panel-description">{t("p2NoFeatured")}</p>
+                                </div>
+                                <h3>{c.name}</h3>
+                                <p>{c.description || t("p2OpportunityIntro")}</p>
+                                {c.promoCode && (
+                                  <button
+                                    type="button"
+                                    className="promo-inline-pill"
+                                    onClick={() => {
+                                      void navigator.clipboard.writeText(c.promoCode!);
+                                      setCopiedCode(c.promoCode!);
+                                    }}
+                                  >
+                                    <span>
+                                      {t("p4PromoCodeLabel")}: <strong>{c.promoCode}</strong>
+                                    </span>
+                                    <Copy size={13} />
+                                    {copiedCode === c.promoCode && (
+                                      <small>{t("p4PromoCopied")}</small>
+                                    )}
+                                  </button>
+                                )}
+                                <Link href={c.url} className="button button-small">
+                                  {t("p2ExploreOpportunity")}
+                                  <ArrowUpRight size={16} />
+                                </Link>
+                                {c.isDemo && <small>{t("development")}</small>}
+                              </article>
+                            ))}
+                          </>
+                        )}
+                        {showcaseItems.length === 0 && extraOpportunities.length === 0 && (
+                          <>
+                            <Eyebrow>{t("p2Opportunity")}</Eyebrow>
+                            <p className="panel-description">{t("p2NoFeatured")}</p>
+                          </>
                         )}
                       </div>
                     )}
@@ -214,10 +301,14 @@ export function PublicProfile({
                         </Link>
                       ))}
                     {module.type === "REFERRAL" && data.referralEntry && (
-                      <>
-                        <ButtonLink href={data.referralEntry.url}>{t("supportCreator")}</ButtonLink>
+                      <div className="public-viral-cta">
+                        <h3>{t("p6PublicViralTitle")}</h3>
+                        <p>{t("p6PublicViralDesc")}</p>
+                        <ButtonLink href={data.referralEntry.url}>
+                          {t("p6PublicViralCta")}
+                        </ButtonLink>
                         <p className="field-hint">{t("p2DirectOnly")}</p>
-                      </>
+                      </div>
                     )}
                   </section>
                 ))}

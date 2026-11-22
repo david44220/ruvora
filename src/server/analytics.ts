@@ -2,6 +2,7 @@ import type { Prisma, User } from "@prisma/client";
 import { db } from "./db";
 import { requireRole } from "./auth";
 import { resolveAdvertiserWorkspace } from "./workspaces";
+import { getChannelAnalytics } from "./social-promote";
 
 function jsonRecord(value: Prisma.JsonValue | undefined): Prisma.JsonObject | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
@@ -176,6 +177,7 @@ export async function getCreatorAnalytics(user: User) {
       moneyAllocatedMinor: allocations.reduce((sum, row) => sum + row.amountMinor, 0n),
     },
     daily: [...daily.values()].sort((a, b) => a.date.localeCompare(b.date)),
+    byChannel: await getChannelAnalytics(user.id),
     campaigns: [...campaigns.values()],
     allocations,
   };
@@ -192,6 +194,7 @@ export async function getAdvertiserAnalytics(user: User, workspaceId?: string) {
           include: {
             creator: { select: { displayName: true, socialLinks: true } },
             user: { select: { country: true } },
+            attribution: { select: { socialChannel: true } },
           },
         },
       },
@@ -225,6 +228,10 @@ export async function getAdvertiserAnalytics(user: User, workspaceId?: string) {
     string,
     { platform: string; validatedActions: number; spendMinor: bigint }
   >();
+  const socialChannelMap = new Map<
+    string,
+    { channel: string; validatedActions: number; spendMinor: bigint }
+  >();
   const variantMap = new Map<
     string,
     { variantId: string; validatedActions: number; spendMinor: bigint }
@@ -257,6 +264,12 @@ export async function getAdvertiserAnalytics(user: User, workspaceId?: string) {
       pRow.spendMinor += activity.billableMinor;
       platformMap.set(primaryPlatform, pRow);
     }
+    const ch = activity.attribution?.socialChannel ?? "DIRECT";
+    const scRow = socialChannelMap.get(ch) ?? { channel: ch, validatedActions: 0, spendMinor: 0n };
+    scRow.validatedActions++;
+    scRow.spendMinor += activity.billableMinor;
+    socialChannelMap.set(ch, scRow);
+
     const dayKey = (activity.validatedAt ?? activity.createdAt).toISOString().slice(0, 10);
     const dRow = dailyMap.get(dayKey) ?? { date: dayKey, validatedActions: 0, spendMinor: 0n };
     dRow.validatedActions++;
@@ -299,6 +312,9 @@ export async function getAdvertiserAnalytics(user: User, workspaceId?: string) {
     daily: [...dailyMap.values()].sort((a, b) => a.date.localeCompare(b.date)),
     byCountry: [...countryMap.values()].sort((a, b) => b.validatedActions - a.validatedActions),
     byPlatform: [...platformMap.values()].sort((a, b) => b.validatedActions - a.validatedActions),
+    bySocialChannel: [...socialChannelMap.values()].sort(
+      (a, b) => b.validatedActions - a.validatedActions,
+    ),
     byVariant: [...variantMap.values()].sort((a, b) => b.validatedActions - a.validatedActions),
     campaigns: campaigns.map((campaign) => ({
       id: campaign.id,

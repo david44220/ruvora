@@ -213,17 +213,80 @@ export async function getPublicProfile(handle: string) {
     promoCode?: string | null;
     discountLabel?: string | null;
   }[] = [];
+  const showcase: {
+    id: string;
+    campaignId: string;
+    collectionName: string;
+    creatorNote: string;
+    name: string;
+    description: string;
+    objective: string;
+    disclosureNote: string;
+    isDemo: boolean;
+    url: string;
+    promoCode?: string | null;
+    discountLabel?: string | null;
+  }[] = [];
   const trackedEvents: Record<string, string> = {};
   try {
     entry = await getProfileEntry(handle);
+    const activePromoCodes = await db.promoCode.findMany({
+      where: { creatorId: user.id, active: true },
+      select: { campaignId: true, code: true, discountLabel: true },
+    });
+    const promoByCampaign = new Map(activePromoCodes.map((p) => [p.campaignId, p]));
+
+    const pinnedShowcase = await db.creatorShowcaseItem.findMany({
+      where: {
+        creatorId: user.id,
+        pinned: true,
+        campaign: {
+          state: "ACTIVE",
+          ...(isDevelopment() ? {} : { isDemo: false }),
+        },
+      },
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
+      take: 6,
+      include: {
+        campaign: {
+          select: {
+            id: true,
+            name: true,
+            description: true,
+            objective: true,
+            isDemo: true,
+            creativeBrief: true,
+          },
+        },
+      },
+    });
+    for (const item of pinnedShowcase) {
+      try {
+        const link = await getCreatorCampaignEntry(handle, item.campaign.id);
+        const promo = promoByCampaign.get(item.campaign.id);
+        const brief = item.campaign.creativeBrief as { disclosureNote?: string } | null;
+        showcase.push({
+          id: item.id,
+          campaignId: item.campaign.id,
+          collectionName: item.collectionName,
+          creatorNote: item.creatorNote,
+          name: item.campaign.name,
+          description: item.campaign.description,
+          objective: item.campaign.objective,
+          disclosureNote: brief?.disclosureNote ?? "",
+          isDemo: item.campaign.isDemo,
+          url: link.url,
+          promoCode: promo?.code ?? null,
+          discountLabel: promo?.discountLabel ?? null,
+        });
+      } catch (error) {
+        if (!(error instanceof AppError)) throw error;
+      }
+    }
+
     if (user.autoMonetize) {
       const creator = await db.user.findUniqueOrThrow({ where: { id: user.id } });
       const available = await listCampaigns(creator, { forCreator: true });
-      const activePromoCodes = await db.promoCode.findMany({
-        where: { creatorId: user.id, active: true },
-        select: { campaignId: true, code: true, discountLabel: true },
-      });
-      const promoByCampaign = new Map(activePromoCodes.map((p) => [p.campaignId, p]));
       for (const campaign of available.campaigns.filter((c) => c.canParticipate).slice(0, 3)) {
         try {
           const link = await getCreatorCampaignEntry(handle, campaign.id);
@@ -272,6 +335,7 @@ export async function getPublicProfile(handle: string) {
     entry,
     referralEntry,
     opportunities,
+    showcase,
     trackedEvents,
     profile: { ...user, xp, level: Math.floor(Math.sqrt(Math.max(0, xp) / 100)) + 1 },
     events: events.map(publicEvent),

@@ -454,6 +454,10 @@ const errors: Record<string, [string, string]> = {
     "Passkey counter anomaly detected. Verification rejected.",
     "Anomalie de compteur détectée sur la passkey. Vérification refusée.",
   ],
+  SHOWCASE_LIMIT: [
+    "You can pin up to 6 active campaigns in your public showcase.",
+    "Vous pouvez épingler jusqu’à 6 campagnes actives dans votre vitrine publique.",
+  ],
 };
 export function errorMessage(code: string, locale: Locale) {
   return (

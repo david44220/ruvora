@@ -116,6 +116,14 @@ import {
   verifyPasskeyAssertion,
 } from "./security/passkeys";
 import { logError, logWarn } from "./logger";
+import {
+  getPromoteHub,
+  getReferralFunnel,
+  quickStartPromote,
+  recordSocialShareTelemetry,
+  removeShowcaseItem,
+  upsertShowcaseItem,
+} from "./social-promote";
 export async function readJson(request: Request): Promise<unknown> {
   assert(
     request.headers.get("content-type")?.split(";")[0] === "application/json",
@@ -268,6 +276,10 @@ export async function handleApi(request: NextRequest, path: string[]) {
           requestId,
         );
       if (route === "quests") return response(await listQuests(await requireUser()), requestId);
+      if (route === "promote/hub")
+        return response(await getPromoteHub(await requireUser()), requestId);
+      if (route === "referrals/funnel")
+        return response(await getReferralFunnel(await requireUser()), requestId);
       if (route === "notifications")
         return response(await listNotifications(await requireUser(), { cursor, limit }), requestId);
       if (route === "promo-codes")
@@ -452,6 +464,14 @@ export async function handleApi(request: NextRequest, path: string[]) {
       if (path[0] === "admin" && path[1] === "webhooks" && path.length === 4 && path[3] === "retry")
         return response(await retryWebhook(user, sessionToken, path[2]!, input), requestId);
       if (route === "shares") return response(await createShareLink(user, input), requestId, 201);
+      if (route === "promote/quickstart")
+        return response(await quickStartPromote(user, input), requestId);
+      if (route === "promote/showcase")
+        return response(await upsertShowcaseItem(user, input), requestId, 201);
+      if (route === "promote/showcase/remove")
+        return response(await removeShowcaseItem(user, input), requestId);
+      if (route === "promote/track-share")
+        return response(await recordSocialShareTelemetry(user, input), requestId);
       if (route === "profile/modules")
         return response(await saveProfileModules(user, input), requestId);
       if (route === "profile/audience/begin")
