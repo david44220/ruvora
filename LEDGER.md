@@ -43,3 +43,17 @@ These operations call the existing `postLedger` inside the lifecycle/settlement 
 Migration `202609140005_events` adds exact account-owner identities, event-specific allowed journal kinds, counterparty checks and deferred reconciliation against the immutable settlement snapshot. A renamed operation cannot route prize funds into platform revenue or another event. Active obligations stay fully funded; settled/cancelled pools must be empty. The existing deferred balanced-journal and protected nonnegative-account constraints apply to advertiser available and prize accounts as well.
 
 Event command keys retain actor, scope, kind and canonical payload hash in append-only EventOperation records. Finalization stores and compares the complete request payload. Serializable retries include the Prisma pg adapter's raw-query SQLSTATE serialization/deadlock path. See [EVENT_SETTLEMENT.md](EVENT_SETTLEMENT.md) for the independent approval and immutable final snapshot contract. Tests verify internal payable credits; no live external payout is claimed.
+
+## Creator payout journals (Pass 05)
+
+Migration `202611220009_pass05_platform_completeness` adds `PAYOUT_PENDING` and `PAYOUT_SETTLED` to `AccountKind` alongside the `PayoutRequest` workflow (`src/server/payouts.ts`). Every payout transition moves EUR minor units exclusively via balanced append-only journals inside serializable transactions:
+
+| Operation              | Debit bucket                                 | Credit bucket                                    |
+| ---------------------- | -------------------------------------------- | ------------------------------------------------ |
+| Request payout (≥ €5)  | `user:{userId}` `USER_PAYABLE`               | `payout:{payoutId}:pending` `PAYOUT_PENDING`     |
+| Settle approved payout | `payout:{payoutId}:pending` `PAYOUT_PENDING` | `payout:settled` `PAYOUT_SETTLED`                |
+| Reject / refund payout | `payout:{payoutId}:pending` `PAYOUT_PENDING` | `user:{userId}` `USER_PAYABLE` (`PAYOUT_REFUND`) |
+
+- `USER_PAYABLE`, `PAYOUT_PENDING`, and `PAYOUT_SETTLED` are guarded by `assertSufficientBalances` and the deferred PostgreSQL `ledger_nonnegative_at_commit` trigger.
+- Requests enforce a minimum of €5.00 (`500n` minor units), verified email, no account hold/suspension, encrypted destination reference (`AES-256-GCM`), and dual independent `FinancialApproval` (`PAYOUT_OVERRIDE`) for payouts ≥ €100.00 or any payout outside development.
+- Development mode settles payouts in the local ledger only (`isDemo: true`) and never initiates real bank transfers. Connecting live Stripe Connect / SEPA payout rails remains a production launch gate.

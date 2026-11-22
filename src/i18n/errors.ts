@@ -405,6 +405,55 @@ const errors: Record<string, [string, string]> = {
     "You are already the owner of this workspace.",
     "Vous êtes déjà propriétaire de cet espace.",
   ],
+  KYC_REQUIRED: [
+    "Complete KYC identity verification before requesting production payouts.",
+    "Complétez votre vérification d’identité (KYC) avant un retrait en production.",
+  ],
+  PAYOUT_NOT_FOUND: ["Payout request not found.", "Demande de retrait introuvable."],
+  PAYOUT_ALREADY_FINALIZED: [
+    "This payout request has already been finalized.",
+    "Cette demande de retrait est déjà finalisée.",
+  ],
+  ACTIVITY_NOT_DISPUTABLE: [
+    "Only rejected activities can be appealed.",
+    "Seules les activités rejetées peuvent faire l’objet d’une contestation.",
+  ],
+  DISPUTE_ALREADY_EXISTS: [
+    "An appeal has already been filed for this activity.",
+    "Une contestation a déjà été déposée pour cette activité.",
+  ],
+  FOUR_EYES_REQUIRED: [
+    "A different independent administrator must review this appeal.",
+    "Un second administrateur indépendant différent doit examiner cette contestation.",
+  ],
+  EVIDENCE_TOO_LARGE: [
+    "Evidence image must not exceed 2 MB.",
+    "L’image justificative ne doit pas dépasser 2 Mo.",
+  ],
+  INVALID_EVIDENCE_FORMAT: [
+    "Only verified PNG, JPEG, or WebP images are accepted.",
+    "Seules les images PNG, JPEG ou WebP vérifiées sont acceptées.",
+  ],
+  WORKSPACE_PERMISSION_DENIED: [
+    "Your workspace role does not allow this action.",
+    "Votre rôle dans cet espace annonceur n’autorise pas cette action.",
+  ],
+  CREATOR_CAP_REACHED: [
+    "You have reached the maximum total participations allowed for this campaign.",
+    "Vous avez atteint le nombre maximal de participations autorisées sur cette campagne.",
+  ],
+  BIO_CODE_NOT_FOUND: [
+    "The verification code was not detected on the public profile page.",
+    "Le code de vérification n’a pas été détecté sur la page de profil publique.",
+  ],
+  PENDING_PAYOUT_EXISTS: [
+    "Resolve pending payout requests before anonymizing your account.",
+    "Régularisez vos demandes de retrait en cours avant d’anonymiser votre compte.",
+  ],
+  PASSKEY_REPLAY_DETECTED: [
+    "Passkey counter anomaly detected. Verification rejected.",
+    "Anomalie de compteur détectée sur la passkey. Vérification refusée.",
+  ],
 };
 export function errorMessage(code: string, locale: Locale) {
   return (

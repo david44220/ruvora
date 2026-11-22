@@ -63,6 +63,9 @@ export function ProfileForm({ user, onSaved }: { user: User; onSaved?: (user: Us
           preferredLanguages: rawLangs.length ? rawLangs : ["fr", "en"],
           profileTheme: String(fields.get("profileTheme") || "obsidian"),
           autoMonetize: fields.get("autoMonetize") === "on",
+          directoryOptIn: fields.get("directoryOptIn") === "on",
+          billingEntityName: String(fields.get("billingEntityName") || "").trim(),
+          vatNumber: String(fields.get("vatNumber") || "").trim(),
           locale,
           ageEligible: fields.get("adult") === "on",
           termsAccepted: fields.get("terms") === "on",
@@ -166,6 +169,29 @@ export function ProfileForm({ user, onSaved }: { user: User; onSaved?: (user: Us
           </label>
           <span className="field-hint">{t("p4AutoMonetizeHint")}</span>
         </div>
+        <div className="field full-width">
+          <label className="checkbox-field">
+            <input
+              name="directoryOptIn"
+              type="checkbox"
+              defaultChecked={user.directoryOptIn !== false}
+            />
+            {t("p5DirectoryOptIn")}
+          </label>
+          <span className="field-hint">{t("p5DirectoryOptInHelp")}</span>
+        </div>
+        <label className="field">
+          {t("p5BillingEntity")}
+          <input
+            name="billingEntityName"
+            defaultValue={user.billingEntityName || ""}
+            maxLength={120}
+          />
+        </label>
+        <label className="field">
+          {t("p5VatNumber")}
+          <input name="vatNumber" defaultValue={user.vatNumber || ""} maxLength={40} />
+        </label>
       </div>
 
       {socials.map((social, index) => (

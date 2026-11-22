@@ -33,8 +33,11 @@ function minorToDecimal(minor: bigint): string {
   return `${neg ? "-" : ""}${whole.toString()}.${cents}`;
 }
 
-export async function exportAdvertiserAnalyticsCsv(user: User): Promise<string> {
-  const data = await getAdvertiserAnalytics(user);
+export async function exportAdvertiserAnalyticsCsv(
+  user: User,
+  workspaceId?: string,
+): Promise<string> {
+  const data = await getAdvertiserAnalytics(user, workspaceId);
   const headers = [
     "campaign_id",
     "campaign_name",
@@ -61,32 +64,79 @@ export async function exportAdvertiserAnalyticsCsv(user: User): Promise<string> 
   return buildCsv(headers, rows);
 }
 
-export async function exportWalletCsv(user: User): Promise<string> {
-  const entries = await db.ledgerEntry.findMany({
-    where: { accountId: `user:${user.id}` },
-    include: { transaction: true },
-    orderBy: { createdAt: "desc" },
-    take: 500,
+const WALLET_CSV_HEADERS = [
+  "entry_id",
+  "date_utc",
+  "transaction_id",
+  "kind",
+  "description",
+  "amount_eur",
+  "currency",
+  "demo",
+] as const;
+
+/**
+ * Cursor-batched streaming wallet CSV export — no 500-row cap, constant memory usage.
+ */
+export function streamWalletCsv(user: User, batchSize = 250): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  const accountId = `user:${user.id}`;
+  let cursor: string | undefined;
+  let sentHeader = false;
+
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (!sentHeader) {
+        sentHeader = true;
+        controller.enqueue(encoder.encode(WALLET_CSV_HEADERS.map(csvCell).join(",") + "\r\n"));
+      }
+      const entries = await db.ledgerEntry.findMany({
+        where: { accountId },
+        include: { transaction: true },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: batchSize,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      });
+      if (entries.length === 0) {
+        controller.close();
+        return;
+      }
+      const chunk =
+        entries
+          .map((entry) =>
+            [
+              entry.id,
+              entry.createdAt.toISOString(),
+              entry.transaction.id,
+              entry.transaction.kind,
+              entry.transaction.description,
+              minorToDecimal(entry.amountMinor),
+              "EUR",
+              entry.transaction.isDemo ? "true" : "false",
+            ]
+              .map(csvCell)
+              .join(","),
+          )
+          .join("\r\n") + "\r\n";
+      controller.enqueue(encoder.encode(chunk));
+      cursor = entries[entries.length - 1]!.id;
+      if (entries.length < batchSize) {
+        controller.close();
+      }
+    },
   });
-  const headers = [
-    "entry_id",
-    "date_utc",
-    "transaction_id",
-    "kind",
-    "description",
-    "amount_eur",
-    "currency",
-    "demo",
-  ];
-  const rows = entries.map((entry) => [
-    entry.id,
-    entry.createdAt.toISOString(),
-    entry.transaction.id,
-    entry.transaction.kind,
-    entry.transaction.description,
-    minorToDecimal(entry.amountMinor),
-    "EUR",
-    entry.transaction.isDemo ? "true" : "false",
-  ]);
-  return buildCsv(headers, rows);
+}
+
+export async function exportWalletCsv(user: User): Promise<string> {
+  const stream = streamWalletCsv(user, 500);
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let output = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    output += decoder.decode(value, { stream: true });
+  }
+  output += decoder.decode();
+  return output;
 }

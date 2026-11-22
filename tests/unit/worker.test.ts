@@ -89,4 +89,21 @@ describe("outbox worker startup and safe output", () => {
     expect(summary).toMatchObject({ expiredApprovals: 0, prunedRateLimits: 7 });
     expect(jobs.pruneRateLimits).toHaveBeenCalledOnce();
   });
+  it("skips execution cleanly when advisory lock is already held", async () => {
+    const jobs = {
+      ...operations(),
+      withLock: vi.fn().mockResolvedValue({ acquired: false }),
+    };
+    const summary = await processOutboxes(jobs);
+    expect(summary).toEqual({
+      skipped: true,
+      reason: "LOCK_HELD",
+      mail: { count: 0, processed: [] },
+      webhooks: { count: 0, processed: [] },
+      expiredApprovals: 0,
+    });
+    expect(jobs.mail).not.toHaveBeenCalled();
+    expect(jobs.webhooks).not.toHaveBeenCalled();
+    expect(jobs.expire).not.toHaveBeenCalled();
+  });
 });

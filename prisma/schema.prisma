@@ -62,6 +62,8 @@ enum AccountKind {
   USER_PAYABLE
   EVENT_PRIZE
   ADVERTISER_AVAILABLE
+  PAYOUT_PENDING
+  PAYOUT_SETTLED
 }
 
 model User {
@@ -134,12 +136,28 @@ model User {
   audienceVerifiedAt           DateTime?
   audienceVerifiedPlatform     String?
   audienceVerifiedSource       String?
+  directoryOptIn               Boolean              @default(true)
+  kycStatus                    String               @default("UNVERIFIED")
+  billingEntityName            String?
+  vatNumber                    String?
+  anonymizedAt                 DateTime?
   questClaims                  QuestClaim[]
   promoCodes                   PromoCode[]
   notifications                Notification[]
   advertiserIntegration        AdvertiserIntegration?
   ownedWorkspaceMembers        WorkspaceMember[]    @relation("WorkspaceOwner")
   workspaceMemberships         WorkspaceMember[]    @relation("WorkspaceMemberUser")
+  passkeyCredentials           PasskeyCredential[]
+  passkeyChallenges            PasskeyChallenge[]
+  payoutRequests               PayoutRequest[]      @relation("PayoutUser")
+  reviewedPayouts              PayoutRequest[]      @relation("PayoutReviewer")
+  activityDisputes             ActivityDispute[]    @relation("DisputeCreator")
+  resolvedDisputes             ActivityDispute[]    @relation("DisputeResolver")
+  evidenceAttachments          EvidenceAttachment[]
+  sentCampaignInvitations      CampaignInvitation[] @relation("InvitationAdvertiser")
+  receivedCampaignInvitations  CampaignInvitation[] @relation("InvitationCreator")
+  ugcDeliverables              UgcDeliverable[]
+  audienceSnapshots            AudienceVerificationSnapshot[]
 }
 
 model Session {
@@ -204,45 +222,54 @@ model Campaign {
   minimumReliabilityScore Int                  @default(0)
   creativeBrief           Json?
   abVariants              Json?
+  maxActivitiesPerCreator Int?
+  isTemplate              Boolean              @default(false)
   promoCodes              PromoCode[]
+  invitations             CampaignInvitation[]
+  ugcDeliverables         UgcDeliverable[]
 
   @@index([state, startAt, endAt])
   @@index([advertiserId, createdAt])
 }
 
 model Activity {
-  providerConversions ProviderConversion[]
-  id                  String               @id @default(cuid())
-  idempotencyKey      String               @unique
-  userId              String
-  creatorId           String?
-  campaignId          String
-  eventId             String?
-  type                ActivityType
-  state               ActivityState        @default(PENDING_VALIDATION)
-  billableMinor       BigInt               @default(0)
-  evidence            String?
-  reviewReason        String?
-  ruleVersion         String?
-  validatedAt         DateTime?
-  createdAt           DateTime             @default(now())
-  updatedAt           DateTime             @updatedAt
-  user                User                 @relation("Participant", fields: [userId], references: [id])
-  creator             User?                @relation("AttributedCreator", fields: [creatorId], references: [id])
-  campaign            Campaign             @relation(fields: [campaignId], references: [id])
-  event               Event?               @relation(fields: [eventId], references: [id])
-  rewards             RewardUnit[]
-  xpEntries           XpEntry[]
-  eventPoints         EventPoint[]
-  attributionId       String?
-  attributionSnapshot Json?
-  requestFingerprint  String?
-  attribution         AttributionContext?  @relation(fields: [attributionId], references: [id], onDelete: Restrict)
-  referralCredit      ReferralCredit?
-  riskScore           Int                  @default(0)
-  riskSignals         Json?
-  abVariantId         String?
-  promoCodeUsed       String?
+  providerConversions     ProviderConversion[]
+  id                      String               @id @default(cuid())
+  idempotencyKey          String               @unique
+  userId                  String
+  creatorId               String?
+  campaignId              String
+  eventId                 String?
+  type                    ActivityType
+  state                   ActivityState        @default(PENDING_VALIDATION)
+  billableMinor           BigInt               @default(0)
+  evidence                String?
+  reviewReason            String?
+  ruleVersion             String?
+  validatedAt             DateTime?
+  createdAt               DateTime             @default(now())
+  updatedAt               DateTime             @updatedAt
+  user                    User                 @relation("Participant", fields: [userId], references: [id])
+  creator                 User?                @relation("AttributedCreator", fields: [creatorId], references: [id])
+  campaign                Campaign             @relation(fields: [campaignId], references: [id])
+  event                   Event?               @relation(fields: [eventId], references: [id])
+  rewards                 RewardUnit[]
+  xpEntries               XpEntry[]
+  eventPoints             EventPoint[]
+  attributionId           String?
+  attributionSnapshot     Json?
+  requestFingerprint      String?
+  attribution             AttributionContext?  @relation(fields: [attributionId], references: [id], onDelete: Restrict)
+  referralCredit          ReferralCredit?
+  riskScore               Int                  @default(0)
+  riskSignals             Json?
+  abVariantId             String?
+  promoCodeUsed           String?
+  reviewedById            String?
+  disputeOriginActivityId String?
+  dispute                 ActivityDispute?     @relation("DisputedActivity")
+  reopenedFromDispute     ActivityDispute?     @relation("ReopenedActivity")
+  evidenceAttachments     EvidenceAttachment[]
 
   @@index([campaignId, userId, createdAt])
   @@index([state, createdAt])
@@ -527,6 +554,7 @@ model AttributionContext {
   expiresAt      DateTime
   boundAt        DateTime?
   isDemo         Boolean           @default(false)
+  abVariantId    String?
   creator        User?             @relation("AttributionCreator", fields: [creatorId], references: [id], onDelete: Restrict)
   referrer       User?             @relation("AttributionReferrer", fields: [referrerId], references: [id], onDelete: Restrict)
   boundUser      User?             @relation("AttributionAccount", fields: [boundUserId], references: [id], onDelete: Restrict)
@@ -819,15 +847,17 @@ model Notification {
 }
 
 model AdvertiserIntegration {
-  id               String   @id @default(cuid())
-  advertiserId     String   @unique
-  keyPrefix        String
-  sealedSigningKey String
-  signingKeyDigest String
-  lastRotatedAt    DateTime @default(now())
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-  advertiser       User     @relation(fields: [advertiserId], references: [id], onDelete: Cascade)
+  id                       String    @id @default(cuid())
+  advertiserId             String    @unique
+  keyPrefix                String
+  sealedSigningKey         String
+  signingKeyDigest         String
+  previousSealedSigningKey String?
+  previousKeyExpiresAt     DateTime?
+  lastRotatedAt            DateTime  @default(now())
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
+  advertiser               User      @relation(fields: [advertiserId], references: [id], onDelete: Cascade)
 }
 
 model WorkspaceMember {
@@ -841,4 +871,152 @@ model WorkspaceMember {
 
   @@unique([ownerId, memberId])
   @@index([memberId])
+}
+
+model PasskeyCredential {
+  id            String    @id @default(cuid())
+  userId        String
+  credentialId  String    @unique
+  publicKeySpki String
+  algorithm     Int       @default(-7)
+  signCount     BigInt    @default(0)
+  label         String    @default("Passkey")
+  transports    String[]  @default([])
+  createdAt     DateTime  @default(now())
+  lastUsedAt    DateTime?
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model PasskeyChallenge {
+  id         String    @id @default(cuid())
+  userId     String?
+  purpose    String
+  challenge  String    @unique
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+  user       User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+}
+
+model PayoutRequest {
+  id                    String    @id @default(cuid())
+  userId                String
+  amountMinor           BigInt
+  currency              String    @default("EUR")
+  provider              String    @default("development")
+  state                 String    @default("REQUESTED")
+  destinationSummary    String
+  destinationCiphertext String
+  idempotencyKey        String    @unique
+  reserveTransactionId  String?   @unique
+  settleTransactionId   String?   @unique
+  approvalId            String?
+  reviewerId            String?
+  reviewReason          String?
+  externalReference     String?
+  isDemo                Boolean   @default(false)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  settledAt             DateTime?
+  user                  User      @relation("PayoutUser", fields: [userId], references: [id], onDelete: Restrict)
+  reviewer              User?     @relation("PayoutReviewer", fields: [reviewerId], references: [id], onDelete: Restrict)
+
+  @@index([userId, createdAt])
+  @@index([state, createdAt])
+}
+
+model ActivityDispute {
+  id                 String    @id @default(cuid())
+  activityId         String    @unique
+  creatorId          String
+  reason             String
+  evidenceNote       String    @default("")
+  attachmentId       String?
+  state              String    @default("OPEN")
+  originalReviewerId String?
+  resolvedById       String?
+  resolutionNote     String?
+  reopenedActivityId String?   @unique
+  createdAt          DateTime  @default(now())
+  resolvedAt         DateTime?
+  activity           Activity  @relation("DisputedActivity", fields: [activityId], references: [id], onDelete: Restrict)
+  creator            User      @relation("DisputeCreator", fields: [creatorId], references: [id], onDelete: Restrict)
+  resolvedBy         User?     @relation("DisputeResolver", fields: [resolvedById], references: [id], onDelete: Restrict)
+  reopenedActivity   Activity? @relation("ReopenedActivity", fields: [reopenedActivityId], references: [id], onDelete: Restrict)
+
+  @@index([state, createdAt])
+  @@index([creatorId, createdAt])
+}
+
+model EvidenceAttachment {
+  id          String    @id @default(cuid())
+  ownerId     String
+  activityId  String?
+  disputeId   String?
+  filename    String
+  mimeType    String
+  sizeBytes   Int
+  sha256      String
+  storageKind String    @default("LOCAL_SEALED")
+  storageKey  String
+  createdAt   DateTime  @default(now())
+  owner       User      @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  activity    Activity? @relation(fields: [activityId], references: [id], onDelete: SetNull)
+
+  @@index([ownerId, createdAt])
+  @@index([activityId])
+}
+
+model CampaignInvitation {
+  id           String    @id @default(cuid())
+  campaignId   String
+  advertiserId String
+  creatorId    String
+  message      String    @default("")
+  state        String    @default("PENDING")
+  createdAt    DateTime  @default(now())
+  respondedAt  DateTime?
+  campaign     Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  advertiser   User      @relation("InvitationAdvertiser", fields: [advertiserId], references: [id], onDelete: Cascade)
+  creator      User      @relation("InvitationCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, creatorId])
+  @@index([creatorId, state, createdAt])
+}
+
+model UgcDeliverable {
+  id           String   @id @default(cuid())
+  campaignId   String
+  creatorId    String
+  state        String   @default("APPLIED")
+  pitch        String   @default("")
+  draftUrl     String?
+  publishedUrl String?
+  feedback     String?
+  activityId   String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  campaign     Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  creator      User     @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, creatorId])
+  @@index([campaignId, state])
+  @@index([creatorId, state])
+}
+
+model AudienceVerificationSnapshot {
+  id                String   @id @default(cuid())
+  userId            String
+  platform          String
+  handleUrl         String
+  declaredFollowers Int
+  provenance        String
+  verifiedAt        DateTime @default(now())
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, verifiedAt])
 }

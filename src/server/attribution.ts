@@ -447,10 +447,15 @@ export async function startAttribution(
     }
     const attributionToken = opaque(),
       visitorToken = existing && tokens?.visitorToken ? tokens.visitorToken : opaque();
+    const visitorHash = attributionTokenHash(visitorToken);
+    const assignedVariant =
+      entry.campaign && entry.campaign.abVariants
+        ? pickCampaignAbVariant(visitorHash, entry.campaign.id, entry.campaign.abVariants)
+        : null;
     let context = await tx.attributionContext.create({
       data: {
         tokenHash: attributionTokenHash(attributionToken),
-        visitorHash: attributionTokenHash(visitorToken),
+        visitorHash,
         creatorId: entry.creatorId,
         referrerId: entry.referrerId,
         shareLinkId: entry.id,
@@ -463,6 +468,7 @@ export async function startAttribution(
         lastTouchAt: now,
         expiresAt: new Date(now.getTime() + config.attribution.windowSeconds * 1000),
         isDemo: entry.isDemo,
+        abVariantId: assignedVariant,
       },
     });
     if (user) context = await bindContext(tx, context, user.id);
@@ -493,20 +499,52 @@ export async function startAttribution(
       attributionToken,
       visitorToken,
       expiresAt: context.expiresAt,
-      redirectTo: destination(entry),
+      redirectTo: destination(entry, assignedVariant),
       source: context.source,
     };
   });
 }
-function destination(entry: {
-  source: string;
-  campaignId: string | null;
-  event: { slug: string } | null;
-  creator: { handle: string | null } | null;
-}) {
+export function pickCampaignAbVariant(
+  visitorSeed: string,
+  campaignId: string,
+  rawVariants: unknown,
+): string | null {
+  if (!Array.isArray(rawVariants) || rawVariants.length === 0) return null;
+  const valid = rawVariants
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const v = item as { id?: unknown; weight?: unknown };
+      if (typeof v.id !== "string" || !v.id) return null;
+      const weight =
+        typeof v.weight === "number" && v.weight > 0 ? Math.min(100, Math.floor(v.weight)) : 50;
+      return { id: v.id, weight };
+    })
+    .filter((v): v is { id: string; weight: number } => v !== null);
+  if (valid.length === 0) return null;
+  const totalWeight = valid.reduce((sum, v) => sum + v.weight, 0);
+  const digest = attributionTokenHash(`${visitorSeed}:${campaignId}`);
+  const bucket = parseInt(digest.slice(0, 8), 16) % totalWeight;
+  let acc = 0;
+  for (const variant of valid) {
+    acc += variant.weight;
+    if (bucket < acc) return variant.id;
+  }
+  return valid[0]!.id;
+}
+function destination(
+  entry: {
+    source: string;
+    campaignId: string | null;
+    event: { slug: string } | null;
+    creator: { handle: string | null } | null;
+  },
+  abVariantId?: string | null,
+) {
   if (entry.source === "REFERRAL") return "/register";
-  if (entry.campaignId)
-    return `/app/opportunities?campaign=${encodeURIComponent(entry.campaignId)}`;
+  if (entry.campaignId) {
+    const base = `/app/opportunities?campaign=${encodeURIComponent(entry.campaignId)}`;
+    return abVariantId ? `${base}&variant=${encodeURIComponent(abVariantId)}` : base;
+  }
   if (entry.event) return `/events/${encodeURIComponent(entry.event.slug)}`;
   return entry.creator?.handle ? `/@${entry.creator.handle}` : "/";
 }

@@ -15,6 +15,7 @@ import { type Campaign, type Activity, type User } from "@/lib/types";
 import { PageTitle, Stat } from "./workspace-ui";
 import { Loading, Notice, Empty, Status } from "./ui";
 import { Pass02Admin } from "./admin-pass02";
+import { AdminPass05Queues } from "./pass05-security-admin";
 interface AdminData {
   campaigns: Campaign[];
   activities: (Activity & { evidence?: string })[];
@@ -620,6 +621,7 @@ export function AdminScreen() {
           </table>
         </div>
       </section>
+      <AdminPass05Queues onChanged={() => void result.reload()} />
       <Pass02Admin />
     </>
   );

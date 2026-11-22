@@ -7,13 +7,22 @@ import { pruneExpiredRateLimits } from "../src/server/auth";
 import { processWebhookInbox } from "../src/server/webhooks";
 import { validateRuntimeEnvironment } from "../src/server/environment";
 import { AppError } from "../src/server/errors";
-import { db } from "../src/server/db";
+import { db, withAdvisoryLock } from "../src/server/db";
+
+const WORKER_ADVISORY_LOCK_KEY = 42026005;
+
 type WorkerOperations = {
   mail: () => Promise<{ processed: { id: string; status: string }[] }>;
-  webhooks: () => Promise<{ processed: { eventId: string; status: string; errorCode?: string }[] }>;
+  webhooks: () => Promise<{
+    processed: { eventId: string; status: string; errorCode?: string }[];
+  }>;
   expire: () => Promise<{ count: number }>;
   pruneRateLimits?: () => Promise<{ count: number }>;
+  withLock?: <T>(
+    work: () => Promise<T>,
+  ) => Promise<{ acquired: true; result: T } | { acquired: false }>;
 };
+
 /** Runtime preflight always happens before any queue claim or expiry mutation. */
 export async function processOutboxes(
   operations: WorkerOperations = {
@@ -21,32 +30,53 @@ export async function processOutboxes(
     webhooks: processWebhookInbox,
     expire: expireApprovals,
     pruneRateLimits: pruneExpiredRateLimits,
+    withLock: (work) => withAdvisoryLock(WORKER_ADVISORY_LOCK_KEY, work),
   },
 ) {
   validateRuntimeEnvironment();
-  const mail = await operations.mail();
-  const webhooks = await operations.webhooks();
-  const approvals = await operations.expire();
-  const pruned = operations.pruneRateLimits ? await operations.pruneRateLimits() : undefined;
-  // Explicit projections keep provider payloads, bigint values and mail secrets
-  // out of stdout even when a service later adds fields to its return value.
-  return {
-    mail: {
-      count: mail.processed.length,
-      processed: mail.processed.slice(0, 100).map((item) => ({ id: item.id, status: item.status })),
-    },
-    webhooks: {
-      count: webhooks.processed.length,
-      processed: webhooks.processed.slice(0, 100).map((item) => ({
-        eventId: item.eventId,
-        status: item.status,
-        ...(item.errorCode ? { errorCode: item.errorCode } : {}),
-      })),
-    },
-    expiredApprovals: approvals.count,
-    ...(pruned !== undefined ? { prunedRateLimits: pruned.count } : {}),
+  const runBody = async () => {
+    const mail = await operations.mail();
+    const webhooks = await operations.webhooks();
+    const approvals = await operations.expire();
+    const pruned = operations.pruneRateLimits ? await operations.pruneRateLimits() : undefined;
+    // Explicit projections keep provider payloads, bigint values and mail secrets
+    // out of stdout even when a service later adds fields to its return value.
+    return {
+      mail: {
+        count: mail.processed.length,
+        processed: mail.processed
+          .slice(0, 100)
+          .map((item) => ({ id: item.id, status: item.status })),
+      },
+      webhooks: {
+        count: webhooks.processed.length,
+        processed: webhooks.processed.slice(0, 100).map((item) => ({
+          eventId: item.eventId,
+          status: item.status,
+          ...(item.errorCode ? { errorCode: item.errorCode } : {}),
+        })),
+      },
+      expiredApprovals: approvals.count,
+      ...(pruned !== undefined ? { prunedRateLimits: pruned.count } : {}),
+    };
   };
+
+  if (operations.withLock) {
+    const locked = await operations.withLock(runBody);
+    if (!locked.acquired) {
+      return {
+        skipped: true,
+        reason: "LOCK_HELD",
+        mail: { count: 0, processed: [] },
+        webhooks: { count: 0, processed: [] },
+        expiredApprovals: 0,
+      };
+    }
+    return locked.result;
+  }
+  return runBody();
 }
+
 async function main() {
   try {
     console.log(JSON.stringify(await processOutboxes()));
@@ -67,5 +97,6 @@ async function main() {
     }
   }
 }
+
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href)
   await main();

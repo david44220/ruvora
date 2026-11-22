@@ -161,6 +161,21 @@ export async function submitActivity(user: User, input: unknown, tokens?: Attrib
       "You have reached this campaign's daily participation limit.",
       429,
     );
+    if (campaign.maxActivitiesPerCreator && campaign.maxActivitiesPerCreator > 0) {
+      const lifetimeCount = await tx.activity.count({
+        where: {
+          userId: user.id,
+          campaignId: campaign.id,
+          state: { in: ["PENDING_VALIDATION", "VALIDATED"] },
+        },
+      });
+      assert(
+        lifetimeCount < campaign.maxActivitiesPerCreator,
+        "CREATOR_CAP_REACHED",
+        "You have reached this campaign's maximum total participation limit.",
+        429,
+      );
+    }
     if (value.eventId) {
       assert(
         campaign.eventId === value.eventId,
@@ -197,6 +212,7 @@ export async function submitActivity(user: User, input: unknown, tokens?: Attrib
       attributionCreatedAt: attributed?.context.firstTouchAt ?? null,
       isDemoCampaign: campaign.isDemo,
     });
+    const resolvedVariantId = value.abVariantId ?? attributed?.context.abVariantId ?? null;
     const activity = await tx.activity.create({
       data: {
         userId: user.id,
@@ -206,7 +222,7 @@ export async function submitActivity(user: User, input: unknown, tokens?: Attrib
         type: value.type,
         idempotencyKey: key,
         evidence: value.evidence,
-        abVariantId: value.abVariantId ?? null,
+        abVariantId: resolvedVariantId,
         promoCodeUsed: normalizedPromo ?? null,
         riskScore: risk.riskScore,
         riskSignals: jsonValue(risk.signals),
@@ -307,7 +323,7 @@ export async function reviewActivity(admin: User, activityId: string, input: unk
         );
       const rejected = await tx.activity.update({
         where: { id: activityId },
-        data: { state: "REJECTED", reviewReason: value.reason },
+        data: { state: "REJECTED", reviewReason: value.reason, reviewedById: admin.id },
       });
       await tx.auditLog.create({
         data: {
@@ -514,6 +530,7 @@ export async function reviewActivity(admin: User, activityId: string, input: unk
         ruleVersion: record.version,
         validatedAt: new Date(),
         reviewReason: value.reason,
+        reviewedById: admin.id,
       },
     });
     await tx.auditLog.create({
