@@ -8,6 +8,7 @@ import { encodeQr } from "@/lib/qr";
 import { useAction, useResource } from "@/lib/hooks";
 import { PageTitle } from "./workspace-ui";
 import { Notice, Loading, Empty, PublicNav, Footer } from "./ui";
+import { PasskeysAndGdprPanel } from "./pass05-security-admin";
 interface SecurityData {
   development: boolean;
   emailVerified: boolean;
@@ -283,6 +284,7 @@ export function SecurityScreen() {
           </button>
         </form>
       </details>
+      <PasskeysAndGdprPanel />
       {state.data.development && (
         <DevMailbox
           messages={mail}

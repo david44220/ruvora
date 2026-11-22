@@ -10,6 +10,7 @@ import { verifyWebhookSignature } from "./security/webhook-signature";
 import { requireFreshMfa } from "./security/mfa";
 import { processConversionCallback } from "./providers/conversions";
 import { correctDepositInTransaction } from "./providers/payments";
+import { resolveAdvertiserSigningKeys } from "./integrations";
 export { signWebhook, verifyWebhookSignature } from "./security/webhook-signature";
 function providerConfiguration(provider: string) {
   const development = provider.startsWith("development-");
@@ -25,14 +26,8 @@ function providerConfiguration(provider: string) {
     : provider === "conversion"
       ? process.env.CONVERSION_WEBHOOK_SECRET
       : process.env.PAYMENT_WEBHOOK_SECRET;
-  assert(
-    secret && Buffer.byteLength(secret) >= 32,
-    "WEBHOOK_SECRET_REQUIRED",
-    "Webhook provider secret is not configured.",
-    503,
-  );
   return {
-    secret,
+    secret: secret && Buffer.byteLength(secret) >= 32 ? secret : null,
     development,
     purpose: provider.endsWith("conversion") ? "conversion" : "payment",
   };
@@ -56,19 +51,79 @@ const envelope = z
     data: z.record(z.string(), z.json()),
   })
   .strict();
+
+async function verifyAgainstCandidateSecrets(
+  provider: string,
+  rawBody: Uint8Array,
+  signature: string | undefined,
+  globalSecret: string | null,
+  workspaceId?: string | null,
+) {
+  const candidates: string[] = [];
+  if (workspaceId && (provider === "conversion" || provider === "development-conversion")) {
+    const advertiserKeys = await resolveAdvertiserSigningKeys(workspaceId);
+    candidates.push(...advertiserKeys);
+  }
+  if (globalSecret) candidates.push(globalSecret);
+  assert(
+    candidates.length > 0,
+    "WEBHOOK_SECRET_REQUIRED",
+    "Webhook provider secret is not configured.",
+    503,
+  );
+  let lastError: unknown;
+  for (const key of candidates) {
+    try {
+      verifyWebhookSignature(provider, rawBody, signature, key);
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
 export async function receiveWebhook(
   provider: string,
   rawBody: Uint8Array,
   signature: string | undefined,
+  workspaceId?: string | null,
 ) {
   const config = providerConfiguration(provider);
-  verifyWebhookSignature(provider, rawBody, signature, config.secret);
+  let inferredWorkspaceId = workspaceId?.trim() || null;
   let parsed: unknown;
   try {
     parsed = JSON.parse(Buffer.from(rawBody).toString("utf8"));
   } catch {
+    // Still verify global secret first if configured so unsigned garbage is rejected cleanly as 401
+    if (config.secret) verifyWebhookSignature(provider, rawBody, signature, config.secret);
     throw new AppError("INVALID_WEBHOOK_BODY", "Webhook body is not valid JSON.", 400);
   }
+  if (
+    !inferredWorkspaceId &&
+    config.purpose === "conversion" &&
+    parsed &&
+    typeof parsed === "object" &&
+    "data" in parsed &&
+    parsed.data &&
+    typeof parsed.data === "object" &&
+    "campaignId" in parsed.data &&
+    typeof (parsed.data as { campaignId?: unknown }).campaignId === "string"
+  ) {
+    const camp = await db.campaign.findUnique({
+      where: { id: (parsed.data as { campaignId: string }).campaignId },
+      select: { advertiserId: true },
+    });
+    if (camp) inferredWorkspaceId = camp.advertiserId;
+  }
+
+  await verifyAgainstCandidateSecrets(
+    provider,
+    rawBody,
+    signature,
+    config.secret,
+    inferredWorkspaceId,
+  );
   const value = envelope.parse(parsed);
   assert(
     value.type.startsWith(config.purpose + "."),

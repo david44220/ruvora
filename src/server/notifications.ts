@@ -22,18 +22,26 @@ export async function notifyUser(tx: Tx, input: NotifyUserInput) {
   });
 }
 
-export async function listNotifications(user: User) {
-  const [notifications, unreadCount] = await Promise.all([
+export async function listNotifications(user: User, options?: { cursor?: string; limit?: number }) {
+  const limit = Math.min(Math.max(options?.limit ?? 30, 1), 100);
+  const [rows, unreadCount] = await Promise.all([
     db.notification.findMany({
       where: { userId: user.id },
-      orderBy: { createdAt: "desc" },
-      take: 30,
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: limit + 1,
+      ...(options?.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
     }),
     db.notification.count({
       where: { userId: user.id, readAt: null },
     }),
   ]);
-  return { notifications, unreadCount };
+  const hasMore = rows.length > limit;
+  const notifications = hasMore ? rows.slice(0, limit) : rows;
+  return {
+    notifications,
+    unreadCount,
+    nextCursor: hasMore ? notifications[notifications.length - 1]!.id : null,
+  };
 }
 
 const markReadSchema = z

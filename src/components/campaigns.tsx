@@ -26,6 +26,13 @@ import type { ManagedEvent } from "./event-studio";
 import { useDashboard } from "./app-context";
 import { AdvertiserIntegrationsHub, WorkspaceTeamPanel } from "./pass04-advertiser";
 import { PromoQrBox } from "./pass04-creator";
+import { CreatorInvitationsAndUgcPanel } from "./pass05-creator";
+import {
+  CreatorDirectoryPanel,
+  MonthlyInvoicePdfBar,
+  UgcDeliverablesInboxPanel,
+  WorkspaceSwitcherBar,
+} from "./pass05-advertiser";
 
 const TARGET_PLATFORMS = ["Instagram", "TikTok", "YouTube", "Twitch", "X", "Discord"] as const;
 
@@ -37,7 +44,13 @@ interface AudienceEstimate {
   estimatedMaxActions: number | null;
 }
 
-export function CampaignForm({ onCreated }: { onCreated: () => void }) {
+export function CampaignForm({
+  onCreated,
+  workspaceId,
+}: {
+  onCreated: () => void;
+  workspaceId?: string;
+}) {
   const { t, locale } = useLocale();
   const action = useAction();
   const estimateAction = useAction();
@@ -48,6 +61,7 @@ export function CampaignForm({ onCreated }: { onCreated: () => void }) {
   const [unitVal, setUnitVal] = useState("");
   const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>([]);
   const [estimate, setEstimate] = useState<AudienceEstimate | null>(null);
+  const wsQuery = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : "";
 
   const previewEur = (raw: string) => {
     if (!/^\d+$/.test(raw.trim())) return null;
@@ -96,7 +110,7 @@ export function CampaignForm({ onCreated }: { onCreated: () => void }) {
     const f = new FormData(formRef.current);
     const targeting = parseTargeting(f);
     const out = await estimateAction.run(() =>
-      api<AudienceEstimate>("/campaigns/estimate", {
+      api<AudienceEstimate>(`/campaigns/estimate${wsQuery}`, {
         ...targeting,
         ...(/^\d+$/.test(budgetVal.trim()) && Number(budgetVal) > 0
           ? { budgetMinor: budgetVal.trim() }
@@ -129,23 +143,27 @@ export function CampaignForm({ onCreated }: { onCreated: () => void }) {
       headline || talkingPoints.length || hashtags.length || cta || formatHint,
     );
 
-    const abVariants: { id: string; label: string; destinationUrl: string }[] = [];
+    const abVariants: { id: string; label: string; destinationUrl: string; weight: number }[] = [];
     const varALabel = String(f.get("abVariantALabel") || "").trim();
     const varAUrl = String(f.get("abVariantAUrl") || "").trim();
+    const varAWeight = Number(f.get("abVariantAWeight") || 50) || 50;
     const varBLabel = String(f.get("abVariantBLabel") || "").trim();
     const varBUrl = String(f.get("abVariantBUrl") || "").trim();
+    const varBWeight = Number(f.get("abVariantBWeight") || 50) || 50;
     if (varALabel && varAUrl)
-      abVariants.push({ id: "A", label: varALabel, destinationUrl: varAUrl });
+      abVariants.push({ id: "A", label: varALabel, destinationUrl: varAUrl, weight: varAWeight });
     if (varBLabel && varBUrl)
-      abVariants.push({ id: "B", label: varBLabel, destinationUrl: varBUrl });
+      abVariants.push({ id: "B", label: varBLabel, destinationUrl: varBUrl, weight: varBWeight });
 
+    const maxPerCreatorRaw = String(f.get("maxActivitiesPerCreator") || "").trim();
     const result = await action.run(
       () =>
-        api("/campaigns", {
+        api(`/campaigns${wsQuery}`, {
           name: f.get("name"),
           description: String(f.get("description") || "").trim(),
           ...(f.get("eventId") ? { eventId: f.get("eventId") } : {}),
           ...targeting,
+          ...(maxPerCreatorRaw ? { maxActivitiesPerCreator: Number(maxPerCreatorRaw) } : {}),
           deliveryMode: String(f.get("deliveryMode") || "OPEN"),
           ...(hasBrief
             ? {
@@ -397,6 +415,17 @@ export function CampaignForm({ onCreated }: { onCreated: () => void }) {
           <summary>{t("p4AbSection")}</summary>
           <div className="form-grid" style={{ marginTop: 14 }}>
             <label className="field">
+              {t("p5MaxPerCreatorLabel")}
+              <input
+                name="maxActivitiesPerCreator"
+                type="number"
+                min="1"
+                max="500"
+                placeholder="5"
+              />
+            </label>
+            <div />
+            <label className="field">
               {t("p4AbVariantALabel")}
               <input name="abVariantALabel" maxLength={60} placeholder="Landing A" />
             </label>
@@ -405,12 +434,20 @@ export function CampaignForm({ onCreated }: { onCreated: () => void }) {
               <input name="abVariantAUrl" type="url" pattern="https://.*" />
             </label>
             <label className="field">
+              {t("p5AbVariantWeight")} (A)
+              <input name="abVariantAWeight" type="number" min="1" max="100" defaultValue={50} />
+            </label>
+            <label className="field">
               {t("p4AbVariantBLabel")}
               <input name="abVariantBLabel" maxLength={60} placeholder="Landing B" />
             </label>
             <label className="field">
               {t("p4AbVariantBUrl")}
               <input name="abVariantBUrl" type="url" pattern="https://.*" />
+            </label>
+            <label className="field">
+              {t("p5AbVariantWeight")} (B)
+              <input name="abVariantBWeight" type="number" min="1" max="100" defaultValue={50} />
             </label>
           </div>
         </details>
@@ -429,21 +466,25 @@ export function CampaignForm({ onCreated }: { onCreated: () => void }) {
 function CampaignCard({
   campaign,
   fundingEnabled,
+  workspaceId,
   reload,
 }: {
   campaign: Campaign;
   fundingEnabled: boolean;
+  workspaceId?: string;
   reload: () => Promise<void>;
 }) {
   const { t, locale } = useLocale();
   const action = useAction();
   const key = useRef<string | null>(null);
   const funded = BigInt(campaign.remainingMinor || 0) > 0n;
+  const wsQuery = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : "";
+
   async function fund(source: "DEVELOPMENT" | "AVAILABLE" = "DEVELOPMENT") {
     key.current ??= crypto.randomUUID();
     const result = await action.run(
       () =>
-        api(`/campaigns/${campaign.id}/fund`, {
+        api(`/campaigns/${campaign.id}/fund${wsQuery}`, {
           source,
           amountMinor: campaign.budgetMinor,
           idempotencyKey: key.current,
@@ -454,15 +495,22 @@ function CampaignCard({
   }
   async function review() {
     const result = await action.run(
-      () => api(`/campaigns/${campaign.id}/submit`, {}),
+      () => api(`/campaigns/${campaign.id}/submit${wsQuery}`, {}),
       t("campaignSubmitted"),
     );
     if (result) await reload();
   }
   async function transition(next: "PAUSE" | "RESUME") {
     const result = await action.run(
-      () => api(`/campaigns/${campaign.id}/transition`, { action: next }),
+      () => api(`/campaigns/${campaign.id}/transition${wsQuery}`, { action: next }),
       t(next === "PAUSE" ? "p2CampaignPaused" : "p2CampaignResumed"),
+    );
+    if (result) await reload();
+  }
+  async function duplicate() {
+    const result = await action.run(
+      () => api(`/campaigns/${campaign.id}/duplicate${wsQuery}`, {}),
+      t("p5DuplicatedOk"),
     );
     if (result) await reload();
   }
@@ -532,8 +580,8 @@ function CampaignCard({
           )}
         </div>
       )}
-      {campaign.state === "ACTIVE" && (
-        <div className="form-actions">
+      <div className="form-actions">
+        {campaign.state === "ACTIVE" && (
           <button
             className="button button-small button-secondary"
             onClick={() => transition("PAUSE")}
@@ -541,10 +589,8 @@ function CampaignCard({
           >
             {t(action.busy ? "working" : "p2PauseCampaign")}
           </button>
-        </div>
-      )}
-      {campaign.state === "PAUSED" && (
-        <div className="form-actions">
+        )}
+        {campaign.state === "PAUSED" && (
           <button
             className="button button-small"
             onClick={() => transition("RESUME")}
@@ -552,8 +598,16 @@ function CampaignCard({
           >
             {t(action.busy ? "working" : "p2ResumeCampaign")}
           </button>
-        </div>
-      )}
+        )}
+        <button
+          type="button"
+          className="button button-small button-secondary"
+          onClick={duplicate}
+          disabled={action.busy}
+        >
+          <Copy size={14} aria-hidden="true" /> {t("p5DuplicateBtn")}
+        </button>
+      </div>
       {action.notice && <Notice message={action.notice} error={action.failed} />}
     </article>
   );
@@ -567,6 +621,19 @@ export function AdvertiserScreen({
 }) {
   const { t, locale } = useLocale();
   const [creating, setCreating] = useState(false);
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>(data.user.id);
+  const isDelegated = selectedWorkspaceId !== data.user.id;
+  const delegatedCampaigns = useResource<{ campaigns: Campaign[] }>(
+    `/campaigns?workspaceId=${encodeURIComponent(selectedWorkspaceId)}`,
+  );
+  const displayedCampaigns = isDelegated
+    ? (delegatedCampaigns.data?.campaigns ?? [])
+    : data.campaigns;
+
+  const refreshAll = async () => {
+    await Promise.all([reload(), delegatedCampaigns.reload()]);
+  };
+
   const ru = data.rewardUnits
     .filter((r) => r.category === "ADVERTISER" && r.state === "VALIDATED")
     .reduce((sum, r) => sum + BigInt(r._sum.amountMicros), 0n);
@@ -578,8 +645,12 @@ export function AdvertiserScreen({
           <Plus size={16} />
         </button>
       </PageTitle>
+      <WorkspaceSwitcherBar
+        selectedWorkspaceId={selectedWorkspaceId}
+        onSelect={setSelectedWorkspaceId}
+      />
       <div className="stats-grid advertiser-stats">
-        <Stat label={t("campaigns")} value={data.campaigns.length} icon={<Aperture />} />
+        <Stat label={t("campaigns")} value={displayedCampaigns.length} icon={<Aperture />} />
         <Stat
           label={t("advertiserRU")}
           value={ruNumber(ru, locale)}
@@ -594,35 +665,40 @@ export function AdvertiserScreen({
         />
         <Stat
           label={t("activity")}
-          value={data.campaigns.reduce((sum, c) => sum + (c.validatedCount || 0), 0)}
+          value={displayedCampaigns.reduce((sum, c) => sum + (c.validatedCount || 0), 0)}
           hint={t("statusVALIDATED")}
           icon={<Check />}
         />
       </div>
       <AdvertiserAnalytics />
+      <MonthlyInvoicePdfBar workspaceId={selectedWorkspaceId} />
       {creating && (
         <CampaignForm
+          workspaceId={selectedWorkspaceId}
           onCreated={() => {
             setCreating(false);
-            void reload();
+            void refreshAll();
           }}
         />
       )}
-      {!data.campaigns.length ? (
+      {!displayedCampaigns.length ? (
         <Empty>{t("noRecords")}</Empty>
       ) : (
         <div className="campaign-grid">
-          {data.campaigns.map((c) => (
+          {displayedCampaigns.map((c) => (
             <CampaignCard
               key={c.id}
               campaign={c}
               fundingEnabled={data.fundingEnabled}
-              reload={reload}
+              workspaceId={selectedWorkspaceId}
+              reload={refreshAll}
             />
           ))}
         </div>
       )}
-      <AdvertiserIntegrationsHub campaigns={data.campaigns} />
+      <CreatorDirectoryPanel campaigns={displayedCampaigns} workspaceId={selectedWorkspaceId} />
+      <UgcDeliverablesInboxPanel workspaceId={selectedWorkspaceId} />
+      <AdvertiserIntegrationsHub campaigns={displayedCampaigns} />
       <WorkspaceTeamPanel />
     </>
   );
@@ -844,8 +920,50 @@ function Opportunity({ campaign }: { campaign: Campaign }) {
           {promoAction.notice && <Notice message={promoAction.notice} error={promoAction.failed} />}
         </div>
       )}
+      {campaign.deliveryMode === "UGC_BRIEF" && <UgcBriefApplyBox campaignId={campaign.id} />}
       {action.notice && <Notice message={action.notice} error={action.failed} />}
     </article>
+  );
+}
+function UgcBriefApplyBox({ campaignId }: { campaignId: string }) {
+  const { t } = useLocale();
+  const ugcAction = useAction();
+  const [pitch, setPitch] = useState("");
+  const [applied, setApplied] = useState(false);
+
+  async function apply(e: FormEvent) {
+    e.preventDefault();
+    const ok = await ugcAction.run(
+      () => api(`/campaigns/${campaignId}/ugc/apply`, { pitch: pitch.trim() }),
+      t("p5UgcAppliedOk"),
+    );
+    if (ok) {
+      setApplied(true);
+      setPitch("");
+    }
+  }
+
+  return (
+    <details className="optional-section" style={{ marginTop: 12 }}>
+      <summary>{t("p5UgcApplyTitle")}</summary>
+      <form className="form-stack" onSubmit={apply} style={{ marginTop: 10 }}>
+        <label className="field">
+          {t("p5UgcPitchLabel")}
+          <textarea
+            rows={2}
+            minLength={8}
+            maxLength={800}
+            required
+            value={pitch}
+            onChange={(e) => setPitch(e.target.value)}
+          />
+        </label>
+        <button type="submit" className="button button-small" disabled={ugcAction.busy || applied}>
+          {t("p5UgcApplyBtn")}
+        </button>
+        {ugcAction.notice && <Notice message={ugcAction.notice} error={ugcAction.failed} />}
+      </form>
+    </details>
   );
 }
 export function OpportunitiesScreen({ preferredCampaignId }: { preferredCampaignId?: string }) {
@@ -864,6 +982,7 @@ export function OpportunitiesScreen({ preferredCampaignId }: { preferredCampaign
   return (
     <>
       <PageTitle title={t("opportunities")} description={t("activityDisclaimer")} />
+      <CreatorInvitationsAndUgcPanel />
       <div className="panel discovery-filters">
         <label className="field">
           {t("p2FilterObjective")}

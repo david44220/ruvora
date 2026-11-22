@@ -5,10 +5,13 @@ import { atomic, db } from "./db";
 import { assert } from "./errors";
 import { requireRole } from "./auth";
 import { assertEligible } from "./profiles";
-import { sealSecret, secretDigest } from "./security/crypto";
+import { openSecret, sealSecret, secretDigest } from "./security/crypto";
 import { assertDevelopment, isDevelopment } from "./environment";
 import { signWebhook, receiveWebhook, processWebhook } from "./webhooks";
 import { notifyUser } from "./notifications";
+import { resolveAdvertiserWorkspace } from "./workspaces";
+
+const KEY_ROTATION_GRACE_MS = 24 * 60 * 60 * 1000;
 
 function integrationSnippets(advertiserId: string) {
   const endpoint = "/api/webhooks/conversion";
@@ -18,7 +21,9 @@ function integrationSnippets(advertiserId: string) {
     devEndpoint,
     shopify: `// Shopify Checkout / Pixel webhook relay (Server-to-Server)
 // POST ${endpoint}
-// Header: x-ruvora-signature: t=<unix_ts>,v1=<hmac_sha256_hex>
+// Headers:
+//   x-ruvora-workspace: ${advertiserId}
+//   x-ruvora-signature: t=<unix_ts>,v1=<hmac_sha256_hex>
 {
   "id": "shopify_order_<ORDER_ID>",
   "type": "conversion.verified",
@@ -33,48 +38,97 @@ function integrationSnippets(advertiserId: string) {
   }
 }`,
     stripe: `// Stripe checkout.session.completed -> Ruvora conversion callback
+// Header: x-ruvora-workspace: ${advertiserId}
 // Sign raw JSON body with HMAC-SHA256 using your Ruvora signing key (workspace ${advertiserId.slice(0, 8)})
 // Payload context: "conversion.<timestamp>.<rawBody>"`,
     zapier: `// Zapier / Make / WooCommerce / Webflow Webhook Action
 // URL: https://<your-ruvora-domain>${endpoint}
+// Header: x-ruvora-workspace: ${advertiserId}
 // Method: POST | Content-Type: application/json
 // Pass ruvora_activity_id from your landing URL query or promo code tracking.`,
   };
 }
 
-export async function getAdvertiserIntegration(user: User) {
-  requireRole(user, "ADVERTISER");
+/**
+ * Resolves the advertiser's active signing key plus any previous key still within its 24h rotation grace window.
+ */
+export async function resolveAdvertiserSigningKeys(advertiserId: string): Promise<string[]> {
   const record = await db.advertiserIntegration.findUnique({
-    where: { advertiserId: user.id },
+    where: { advertiserId },
+    select: {
+      sealedSigningKey: true,
+      previousSealedSigningKey: true,
+      previousKeyExpiresAt: true,
+    },
+  });
+  if (!record) return [];
+  const context = `advertiser-integration:${advertiserId}`;
+  const keys: string[] = [];
+  try {
+    keys.push(openSecret(record.sealedSigningKey, context));
+  } catch {
+    // Ignore corrupted box rather than crashing webhook resolution
+  }
+  if (
+    record.previousSealedSigningKey &&
+    record.previousKeyExpiresAt &&
+    record.previousKeyExpiresAt.getTime() > Date.now()
+  ) {
+    try {
+      keys.push(openSecret(record.previousSealedSigningKey, context));
+    } catch {
+      // Ignore expired/corrupted previous box
+    }
+  }
+  return keys;
+}
+
+export async function getAdvertiserIntegration(user: User, workspaceId?: string) {
+  const ctx = await resolveAdvertiserWorkspace(user, workspaceId, "VIEW");
+  const record = await db.advertiserIntegration.findUnique({
+    where: { advertiserId: ctx.ownerId },
     select: {
       id: true,
       keyPrefix: true,
       lastRotatedAt: true,
+      previousKeyExpiresAt: true,
       createdAt: true,
     },
   });
   return {
     configured: Boolean(record),
+    workspaceOwnerId: ctx.ownerId,
+    workspaceRole: ctx.role,
     keyPrefix: record?.keyPrefix ?? null,
     lastRotatedAt: record?.lastRotatedAt ?? null,
+    graceWindowUntil:
+      record?.previousKeyExpiresAt && record.previousKeyExpiresAt.getTime() > Date.now()
+        ? record.previousKeyExpiresAt
+        : null,
     development: isDevelopment(),
-    snippets: integrationSnippets(user.id),
+    snippets: integrationSnippets(ctx.ownerId),
   };
 }
 
-export async function rotateAdvertiserIntegrationKey(user: User) {
-  requireRole(user, "ADVERTISER");
+export async function rotateAdvertiserIntegrationKey(user: User, workspaceId?: string) {
+  const ctx = await resolveAdvertiserWorkspace(user, workspaceId, "OWNER_ONLY");
   return atomic(async (tx) => {
-    await assertEligible(tx, user.id);
+    await assertEligible(tx, ctx.ownerId);
+    const previous = await tx.advertiserIntegration.findUnique({
+      where: { advertiserId: ctx.ownerId },
+      select: { sealedSigningKey: true },
+    });
     const rawKey = `ruv_whsec_${randomBytes(24).toString("hex")}`;
     const keyPrefix = rawKey.slice(0, 18);
-    const sealed = sealSecret(rawKey, `advertiser-integration:${user.id}`);
+    const sealed = sealSecret(rawKey, `advertiser-integration:${ctx.ownerId}`);
     const digest = secretDigest(rawKey);
     const now = new Date();
+    const graceUntil = previous ? new Date(now.getTime() + KEY_ROTATION_GRACE_MS) : null;
+
     const record = await tx.advertiserIntegration.upsert({
-      where: { advertiserId: user.id },
+      where: { advertiserId: ctx.ownerId },
       create: {
-        advertiserId: user.id,
+        advertiserId: ctx.ownerId,
         keyPrefix,
         sealedSigningKey: sealed,
         signingKeyDigest: digest,
@@ -84,6 +138,8 @@ export async function rotateAdvertiserIntegrationKey(user: User) {
         keyPrefix,
         sealedSigningKey: sealed,
         signingKeyDigest: digest,
+        previousSealedSigningKey: previous?.sealedSigningKey ?? null,
+        previousKeyExpiresAt: graceUntil,
         lastRotatedAt: now,
       },
     });
@@ -92,13 +148,14 @@ export async function rotateAdvertiserIntegrationKey(user: User) {
         actorId: user.id,
         action: "ADVERTISER_INTEGRATION_KEY_ROTATED",
         targetId: record.id,
-        details: { keyPrefix },
+        details: { keyPrefix, workspaceOwnerId: ctx.ownerId, hasGraceWindow: Boolean(graceUntil) },
       },
     });
     return {
       keyPrefix: record.keyPrefix,
       signingKey: rawKey,
       lastRotatedAt: record.lastRotatedAt,
+      graceWindowUntil: graceUntil,
       shownOnce: true,
     };
   });
@@ -112,13 +169,13 @@ const devTestSchema = z
   .strict();
 
 /** Development-only conversion callback test exercising the real HMAC webhook inbox. */
-export async function triggerDevTestConversion(user: User, input: unknown) {
-  requireRole(user, "ADVERTISER");
+export async function triggerDevTestConversion(user: User, input: unknown, workspaceId?: string) {
+  const ctx = await resolveAdvertiserWorkspace(user, workspaceId, "MANAGE_CAMPAIGNS");
   assertDevelopment("Development conversion callback test");
   const value = devTestSchema.parse(input);
   const campaign = await db.campaign.findUnique({ where: { id: value.campaignId } });
   assert(
-    campaign && campaign.advertiserId === user.id,
+    campaign && campaign.advertiserId === ctx.ownerId,
     "CAMPAIGN_NOT_FOUND",
     "Campaign not found.",
     404,
@@ -179,15 +236,17 @@ export async function triggerDevTestConversion(user: User, input: unknown) {
 }
 
 export async function listWorkspaceMembers(user: User) {
-  requireRole(user, "ADVERTISER");
+  const canOwn = user.roles.includes("ADVERTISER") || user.roles.includes("ADMIN");
   const [members, memberships] = await Promise.all([
-    db.workspaceMember.findMany({
-      where: { ownerId: user.id },
-      include: {
-        member: { select: { id: true, displayName: true, email: true, handle: true } },
-      },
-      orderBy: { createdAt: "desc" },
-    }),
+    canOwn
+      ? db.workspaceMember.findMany({
+          where: { ownerId: user.id },
+          include: {
+            member: { select: { id: true, displayName: true, email: true, handle: true } },
+          },
+          orderBy: { createdAt: "desc" },
+        })
+      : Promise.resolve([]),
     db.workspaceMember.findMany({
       where: { memberId: user.id },
       include: {

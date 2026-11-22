@@ -21,6 +21,7 @@ import {
 import { getPublicProfile, saveProfile, saveProfileModules } from "./profiles";
 import {
   createCampaign,
+  duplicateCampaign,
   estimateCampaignAudience,
   fundCampaign,
   listCampaigns,
@@ -90,7 +91,31 @@ import {
   addWorkspaceMember,
   removeWorkspaceMember,
 } from "./integrations";
-import { exportAdvertiserAnalyticsCsv, exportWalletCsv } from "./export";
+import { exportAdvertiserAnalyticsCsv, streamWalletCsv } from "./export";
+import { listAccessibleWorkspaces } from "./workspaces";
+import { listPayoutRequests, requestPayout, reviewPayout, updateUserKycStatus } from "./payouts";
+import { fileActivityDispute, listActivityDisputes, resolveActivityDispute } from "./disputes";
+import { listUserEvidence } from "./evidence";
+import {
+  applyUgcBrief,
+  listCreatorInvitations,
+  listUgcDeliverables,
+  respondCampaignInvitation,
+  reviewUgcDeliverable,
+  searchCreatorDirectory,
+  sendCampaignInvitation,
+  submitUgcDraft,
+} from "./directory-ugc";
+import { anonymizeUserAccount, exportUserGdprData } from "./gdpr";
+import {
+  beginPasskeyAuthentication,
+  beginPasskeyRegistration,
+  confirmPasskeyRegistration,
+  deleteUserPasskey,
+  listUserPasskeys,
+  verifyPasskeyAssertion,
+} from "./security/passkeys";
+import { logError, logWarn } from "./logger";
 export async function readJson(request: Request): Promise<unknown> {
   assert(
     request.headers.get("content-type")?.split(";")[0] === "application/json",
@@ -208,27 +233,112 @@ export async function handleApi(request: NextRequest, path: string[]) {
         if (!isDevelopment()) await requireAdminMfaSession(user, sessionToken);
         return response(await listApprovals(user), requestId);
       }
+      const workspaceId =
+        request.nextUrl.searchParams.get("workspaceId") ||
+        request.headers.get("x-ruvora-workspace") ||
+        undefined;
+      const cursor = request.nextUrl.searchParams.get("cursor") || undefined;
+      const limitParam = request.nextUrl.searchParams.get("limit");
+      const limit = limitParam ? Number.parseInt(limitParam, 10) || undefined : undefined;
+
       if (route === "analytics/creator")
         return response(await getCreatorAnalytics(await requireUser()), requestId);
       if (route === "analytics/advertiser")
-        return response(await getAdvertiserAnalytics(await requireUser()), requestId);
+        return response(await getAdvertiserAnalytics(await requireUser(), workspaceId), requestId);
       if (route === "analytics/advertiser/export") {
-        const csv = await exportAdvertiserAnalyticsCsv(await requireUser());
+        const csv = await exportAdvertiserAnalyticsCsv(await requireUser(), workspaceId);
         return csvResponse(csv, "ruvora-advertiser-analytics.csv", requestId);
       }
       if (route === "wallet/export") {
-        const csv = await exportWalletCsv(await requireUser());
-        return csvResponse(csv, "ruvora-wallet-statement.csv", requestId);
+        const user = await requireUser();
+        return new NextResponse(streamWalletCsv(user), {
+          status: 200,
+          headers: {
+            "content-type": "text/csv; charset=utf-8",
+            "content-disposition": 'attachment; filename="ruvora-wallet-statement.csv"',
+            "cache-control": "no-store",
+            "x-content-type-options": "nosniff",
+            "x-request-id": requestId,
+          },
+        });
       }
+      if (route === "workspaces")
+        return response(
+          { workspaces: await listAccessibleWorkspaces(await requireUser()) },
+          requestId,
+        );
       if (route === "quests") return response(await listQuests(await requireUser()), requestId);
       if (route === "notifications")
-        return response(await listNotifications(await requireUser()), requestId);
+        return response(await listNotifications(await requireUser(), { cursor, limit }), requestId);
       if (route === "promo-codes")
         return response(await listCreatorPromoCodes(await requireUser()), requestId);
       if (route === "advertiser/integrations")
-        return response(await getAdvertiserIntegration(await requireUser()), requestId);
+        return response(
+          await getAdvertiserIntegration(await requireUser(), workspaceId),
+          requestId,
+        );
       if (route === "advertiser/team")
         return response(await listWorkspaceMembers(await requireUser()), requestId);
+      if (route === "payouts") {
+        const user = await requireUser();
+        const scope = request.nextUrl.searchParams.get("scope") === "admin" ? "admin" : "self";
+        return response(await listPayoutRequests(user, { scope, cursor, limit }), requestId);
+      }
+      if (route === "disputes") {
+        const user = await requireUser();
+        const scope = request.nextUrl.searchParams.get("scope") === "admin" ? "admin" : "self";
+        return response(await listActivityDisputes(user, { scope, cursor, limit }), requestId);
+      }
+      if (route === "evidence")
+        return response({ items: await listUserEvidence(await requireUser()) }, requestId);
+      if (route === "directory/creators") {
+        const user = await requireUser();
+        const sp = request.nextUrl.searchParams;
+        const num = (k: string) => {
+          const v = sp.get(k);
+          return v && /^\d+$/.test(v) ? Number(v) : undefined;
+        };
+        return response(
+          await searchCreatorDirectory(user, {
+            city: sp.get("city") || undefined,
+            language: sp.get("language") || undefined,
+            platform: sp.get("platform") || undefined,
+            category: sp.get("category") || undefined,
+            minFollowers: num("minFollowers"),
+            maxFollowers: num("maxFollowers"),
+            verifiedOnly: sp.get("verifiedOnly") === "true",
+            minReliability: num("minReliability"),
+            cursor,
+            limit,
+            workspaceId,
+          }),
+          requestId,
+        );
+      }
+      if (route === "invitations")
+        return response({ items: await listCreatorInvitations(await requireUser()) }, requestId);
+      if (route === "ugc") {
+        const scope =
+          request.nextUrl.searchParams.get("scope") === "advertiser" ? "advertiser" : "creator";
+        return response(
+          { items: await listUgcDeliverables(await requireUser(), { scope, workspaceId }) },
+          requestId,
+        );
+      }
+      if (route === "security/gdpr/export") {
+        const payload = await exportUserGdprData(await requireUser());
+        return new NextResponse(JSON.stringify(payload, null, 2), {
+          status: 200,
+          headers: {
+            "content-type": "application/json; charset=utf-8",
+            "content-disposition": 'attachment; filename="ruvora-gdpr-data-export.json"',
+            "cache-control": "no-store",
+            "x-request-id": requestId,
+          },
+        });
+      }
+      if (route === "security/passkeys")
+        return response({ items: await listUserPasskeys(await requireUser()) }, requestId);
       if (route === "admin/growth") {
         const user = await requireUser();
         if (!isDevelopment()) await requireAdminMfaSession(user, sessionToken);
@@ -243,6 +353,9 @@ export async function handleApi(request: NextRequest, path: string[]) {
             forCreator: request.nextUrl.searchParams.get("forCreator") === "true",
             objective: request.nextUrl.searchParams.get("objective") || undefined,
             category: request.nextUrl.searchParams.get("category") || undefined,
+            workspaceId,
+            cursor,
+            limit,
           }),
           requestId,
         );
@@ -257,6 +370,10 @@ export async function handleApi(request: NextRequest, path: string[]) {
     if (request.method === "POST") {
       assertOrigin(request);
       const input = await readJson(request);
+      const workspaceId =
+        request.nextUrl.searchParams.get("workspaceId") ||
+        request.headers.get("x-ruvora-workspace") ||
+        undefined;
       if (route === "attribution/start") {
         await limitRate("attribution-start-ip", ip, 120, 60);
         const { slug } = z
@@ -284,6 +401,8 @@ export async function handleApi(request: NextRequest, path: string[]) {
         return response(await redeemPasswordReset(input), requestId);
       if (route === "security/email/redeem")
         return response(await redeemEmailVerification(input), requestId);
+      if (route === "security/passkeys/auth/begin")
+        return response(await beginPasskeyAuthentication(await getCurrentUser()), requestId);
       if (route === "auth/register" || route === "auth/login") {
         const result = await (route === "auth/register" ? register(input, ip) : login(input, ip));
         const output = response(
@@ -345,15 +464,78 @@ export async function handleApi(request: NextRequest, path: string[]) {
       if (route === "promo-codes")
         return response(await createPromoCode(user, input), requestId, 201);
       if (route === "campaigns/estimate")
-        return response(await estimateCampaignAudience(user, input), requestId);
+        return response(await estimateCampaignAudience(user, input, workspaceId), requestId);
       if (route === "advertiser/integrations/rotate")
-        return response(await rotateAdvertiserIntegrationKey(user), requestId);
+        return response(await rotateAdvertiserIntegrationKey(user, workspaceId), requestId);
       if (route === "advertiser/integrations/test")
-        return response(await triggerDevTestConversion(user, input), requestId);
+        return response(await triggerDevTestConversion(user, input, workspaceId), requestId);
       if (route === "advertiser/team")
         return response(await addWorkspaceMember(user, input), requestId, 201);
       if (route === "advertiser/team/remove")
         return response(await removeWorkspaceMember(user, input), requestId);
+      if (route === "payouts") return response(await requestPayout(user, input), requestId, 201);
+      if (path[0] === "admin" && path[1] === "payouts" && path.length === 4 && path[3] === "review")
+        return response(await reviewPayout(user, sessionToken, path[2]!, input), requestId);
+      if (path[0] === "admin" && path[1] === "users" && path.length === 4 && path[3] === "kyc")
+        return response(await updateUserKycStatus(user, sessionToken, path[2]!, input), requestId);
+      if (path[0] === "activities" && path.length === 3 && path[2] === "dispute")
+        return response(await fileActivityDispute(user, path[1]!, input), requestId, 201);
+      if (
+        path[0] === "admin" &&
+        path[1] === "disputes" &&
+        path.length === 4 &&
+        path[3] === "resolve"
+      )
+        return response(
+          await resolveActivityDispute(user, sessionToken, path[2]!, input),
+          requestId,
+        );
+      if (path[0] === "campaigns" && path.length === 3 && path[2] === "invitations")
+        return response(
+          await sendCampaignInvitation(user, path[1]!, input, workspaceId),
+          requestId,
+          201,
+        );
+      if (path[0] === "invitations" && path.length === 3 && path[2] === "respond")
+        return response(await respondCampaignInvitation(user, path[1]!, input), requestId);
+      if (path[0] === "campaigns" && path.length === 4 && path[2] === "ugc" && path[3] === "apply")
+        return response(await applyUgcBrief(user, path[1]!, input), requestId, 201);
+      if (path[0] === "ugc" && path.length === 3 && path[2] === "draft")
+        return response(await submitUgcDraft(user, path[1]!, input), requestId);
+      if (path[0] === "ugc" && path.length === 3 && path[2] === "review")
+        return response(await reviewUgcDeliverable(user, path[1]!, input, workspaceId), requestId);
+      if (route === "security/gdpr/anonymize") {
+        const result = await anonymizeUserAccount(user, sessionToken, input);
+        const output = response(result, requestId);
+        output.cookies.set(cookieName, "", {
+          httpOnly: true,
+          secure: !isDevelopment(),
+          sameSite: "lax",
+          path: "/",
+          maxAge: 0,
+        });
+        return output;
+      }
+      if (route === "security/passkeys/register/begin")
+        return response(await beginPasskeyRegistration(user), requestId);
+      if (route === "security/passkeys/register/confirm")
+        return response(await confirmPasskeyRegistration(user, input), requestId, 201);
+      if (route === "security/passkeys/auth/verify") {
+        const { secretDigest } = await import("./security/crypto");
+        const tokenHash = sessionToken ? secretDigest(sessionToken) : undefined;
+        const verified = await verifyPasskeyAssertion(input, {
+          expectedUserId: user.id,
+          sessionTokenHash: tokenHash,
+        });
+        return response({ verified: true, credentialId: verified.credentialId }, requestId);
+      }
+      if (
+        path[0] === "security" &&
+        path[1] === "passkeys" &&
+        path.length === 4 &&
+        path[3] === "delete"
+      )
+        return response(await deleteUserPasskey(user, path[2]!), requestId);
       if (route === "security/email/request")
         return response(await requestEmailVerification(user), requestId);
       if (route === "security/password/change")
@@ -406,13 +588,16 @@ export async function handleApi(request: NextRequest, path: string[]) {
       )
         await requireFreshMfa(user, sessionToken);
       if (route === "profile") return response(await saveProfile(user, input), requestId);
-      if (route === "campaigns") return response(await createCampaign(user, input), requestId, 201);
+      if (route === "campaigns")
+        return response(await createCampaign(user, input, workspaceId), requestId, 201);
       if (path[0] === "campaigns" && path.length === 3 && path[2] === "fund")
-        return response(await fundCampaign(user, path[1]!, input), requestId);
+        return response(await fundCampaign(user, path[1]!, input, workspaceId), requestId);
       if (path[0] === "campaigns" && path.length === 3 && path[2] === "submit")
-        return response(await submitCampaign(user, path[1]!), requestId);
+        return response(await submitCampaign(user, path[1]!, workspaceId), requestId);
       if (path[0] === "campaigns" && path.length === 3 && path[2] === "transition")
-        return response(await transitionCampaign(user, path[1]!, input), requestId);
+        return response(await transitionCampaign(user, path[1]!, input, workspaceId), requestId);
+      if (path[0] === "campaigns" && path.length === 3 && path[2] === "duplicate")
+        return response(await duplicateCampaign(user, path[1]!, workspaceId), requestId, 201);
       if (route === "activities")
         return response(await submitActivity(user, input, tokens), requestId, 201);
       if (path[0] === "events" && path.length === 3 && path[2] === "join")
@@ -485,16 +670,14 @@ export async function handleApi(request: NextRequest, path: string[]) {
       code = "NOT_READY";
       message = "A required service is unavailable.";
     }
-    console.error(
-      JSON.stringify({
-        level: status >= 500 ? "error" : "warn",
-        requestId,
-        method: request.method,
-        route,
-        code,
-        status,
-      }),
-    );
+    const logFn = status >= 500 ? logError : logWarn;
+    logFn("api_request_error", {
+      requestId,
+      method: request.method,
+      route,
+      code,
+      status,
+    });
     return response({ error: { code, message }, requestId }, requestId, status);
   }
 }

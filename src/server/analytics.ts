@@ -1,6 +1,7 @@
 import type { Prisma, User } from "@prisma/client";
 import { db } from "./db";
 import { requireRole } from "./auth";
+import { resolveAdvertiserWorkspace } from "./workspaces";
 
 function jsonRecord(value: Prisma.JsonValue | undefined): Prisma.JsonObject | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
@@ -180,11 +181,12 @@ export async function getCreatorAnalytics(user: User) {
   };
 }
 
-export async function getAdvertiserAnalytics(user: User) {
-  requireRole(user, "ADVERTISER");
+export async function getAdvertiserAnalytics(user: User, workspaceId?: string) {
+  const ctx = await resolveAdvertiserWorkspace(user, workspaceId, "VIEW");
+  const ownerId = ctx.ownerId;
   const [campaigns, units] = await Promise.all([
     db.campaign.findMany({
-      where: { advertiserId: user.id },
+      where: { advertiserId: ownerId },
       include: {
         activities: {
           include: {
@@ -195,7 +197,7 @@ export async function getAdvertiserAnalytics(user: User) {
       },
     }),
     db.rewardUnit.findMany({
-      where: { userId: user.id, category: "ADVERTISER" },
+      where: { userId: ownerId, category: "ADVERTISER" },
       select: { amountMicros: true, state: true },
     }),
   ]);

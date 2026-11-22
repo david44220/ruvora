@@ -16,6 +16,7 @@ import {
 import { isDevelopment } from "./environment";
 import { notifyUser } from "./notifications";
 import { getCreatorReliability } from "./risk";
+import { resolveAdvertiserWorkspace } from "./workspaces";
 const positiveMinor = minor.refine((v) => v > 0n, "Amount must be positive.");
 export const idempotencyKey = z.string().regex(/^[a-zA-Z0-9:_-]{8,100}$/);
 export const reason = z.string().trim().min(10).max(500);
@@ -37,6 +38,7 @@ const abVariantSchema = z
       .regex(/^[a-zA-Z0-9_-]{1,24}$/),
     label: z.string().trim().min(1).max(60),
     destinationUrl: safeUrl,
+    weight: z.number().int().min(1).max(100).default(50),
   })
   .strict();
 const campaignSchema = z
@@ -76,11 +78,14 @@ const campaignSchema = z
     deliveryMode: z.enum(["OPEN", "UGC_BRIEF"]).default("OPEN"),
     creativeBrief: creativeBriefSchema.nullable().optional(),
     abVariants: z.array(abVariantSchema).max(4).nullable().optional(),
+    maxActivitiesPerCreator: z.number().int().min(1).max(500).nullable().optional(),
+    isTemplate: z.boolean().default(false),
     frequencyCap: z.number().int().min(1).max(10).default(3),
   })
   .strict();
-export async function createCampaign(user: User, input: unknown) {
-  requireRole(user, "ADVERTISER");
+export async function createCampaign(user: User, input: unknown, workspaceId?: string) {
+  const ctx = await resolveAdvertiserWorkspace(user, workspaceId, "MANAGE_CAMPAIGNS");
+  const ownerId = ctx.ownerId;
   const value = campaignSchema.parse(input);
   assert(
     value.unitCostMinor <= value.dailyBudgetMinor && value.dailyBudgetMinor <= value.budgetMinor,
@@ -102,7 +107,7 @@ export async function createCampaign(user: User, input: unknown) {
     "Campaign end must follow its start and be in the future.",
   );
   return atomic(async (tx) => {
-    await assertEligible(tx, user.id);
+    await assertEligible(tx, ownerId);
     const { config } = await activeRules(tx);
     assert(
       config.reward.rates[value.objective],
@@ -116,34 +121,47 @@ export async function createCampaign(user: User, input: unknown) {
           !["CANCELLED", "REJECTED", "COMPLETED", "SETTLING", "SETTLED"].includes(event.state) &&
           (!event.ownerId
             ? event.state === "ACTIVE"
-            : event.ownerId === user.id || event.sponsorId === user.id) &&
+            : event.ownerId === ownerId || event.sponsorId === ownerId) &&
           startAt >= event.startAt &&
           endAt <= event.endAt,
         "EVENT_WINDOW",
         "Linked campaigns must belong to an authorized event and fit its participation window.",
       );
     }
-    const { creativeBrief, abVariants, maximumCreatorFollowers, ...rest } = value;
+    const { creativeBrief, abVariants, maximumCreatorFollowers, maxActivitiesPerCreator, ...rest } =
+      value;
     const campaign = await tx.campaign.create({
       data: {
         ...rest,
         maximumCreatorFollowers: maximumCreatorFollowers ?? null,
+        maxActivitiesPerCreator: maxActivitiesPerCreator ?? null,
         ...(creativeBrief ? { creativeBrief: jsonValue(creativeBrief) } : {}),
         ...(abVariants && abVariants.length > 0 ? { abVariants: jsonValue(abVariants) } : {}),
         startAt,
         endAt,
-        advertiserId: user.id,
+        advertiserId: ownerId,
       },
     });
     await account(tx, `campaign:${campaign.id}`, "CAMPAIGN_ESCROW", { campaignId: campaign.id });
     await tx.auditLog.create({
-      data: { actorId: user.id, action: "CAMPAIGN_CREATED", targetId: campaign.id, details: {} },
+      data: {
+        actorId: user.id,
+        action: "CAMPAIGN_CREATED",
+        targetId: campaign.id,
+        details: { workspaceOwnerId: ownerId, delegated: ctx.isDelegated },
+      },
     });
     return { campaign };
   });
 }
-export async function fundCampaign(user: User, campaignId: string, input: unknown) {
-  requireRole(user, "ADVERTISER");
+export async function fundCampaign(
+  user: User,
+  campaignId: string,
+  input: unknown,
+  workspaceId?: string,
+) {
+  const ctx = await resolveAdvertiserWorkspace(user, workspaceId, "BILLING");
+  const ownerId = ctx.ownerId;
   const value = z
     .object({
       amountMinor: positiveMinor,
@@ -161,10 +179,10 @@ export async function fundCampaign(user: User, campaignId: string, input: unknow
       503,
     );
   return atomic(async (tx) => {
-    await assertEligible(tx, user.id);
+    await assertEligible(tx, ownerId);
     const campaign = await tx.campaign.findUnique({ where: { id: campaignId } });
     assert(
-      campaign && campaign.advertiserId === user.id,
+      campaign && campaign.advertiserId === ownerId,
       "CAMPAIGN_NOT_FOUND",
       "Campaign not found.",
       404,
@@ -176,13 +194,13 @@ export async function fundCampaign(user: User, campaignId: string, input: unknow
       409,
     );
     const key =
-      (development ? "demo-fund:" : "campaign-reserve:") + user.id + ":" + value.idempotencyKey;
+      (development ? "demo-fund:" : "campaign-reserve:") + ownerId + ":" + value.idempotencyKey;
     const matches = await tx.ledgerTransaction.findMany({
       where: {
         idempotencyKey: {
           in: [
-            "demo-fund:" + user.id + ":" + value.idempotencyKey,
-            "campaign-reserve:" + user.id + ":" + value.idempotencyKey,
+            "demo-fund:" + ownerId + ":" + value.idempotencyKey,
+            "campaign-reserve:" + ownerId + ":" + value.idempotencyKey,
           ],
         },
       },
@@ -227,8 +245,8 @@ export async function fundCampaign(user: User, campaignId: string, input: unknow
       "Funding exceeds the total campaign budget.",
       409,
     );
-    const availableId = `advertiser:${user.id}`;
-    await account(tx, availableId, "ADVERTISER_AVAILABLE", { userId: user.id });
+    const availableId = `advertiser:${ownerId}`;
+    await account(tx, availableId, "ADVERTISER_AVAILABLE", { userId: ownerId });
     await account(tx, `campaign:${campaignId}`, "CAMPAIGN_ESCROW", { campaignId });
     if (development) {
       await account(tx, "platform:cash-clearing", "CASH_CLEARING");
@@ -283,13 +301,13 @@ export async function fundCampaign(user: User, campaignId: string, input: unknow
     return { transaction, isDemo: simulated };
   });
 }
-export async function submitCampaign(user: User, campaignId: string) {
-  requireRole(user, "ADVERTISER");
+export async function submitCampaign(user: User, campaignId: string, workspaceId?: string) {
+  const ctx = await resolveAdvertiserWorkspace(user, workspaceId, "MANAGE_CAMPAIGNS");
   return atomic(async (tx) => {
-    await assertEligible(tx, user.id);
+    await assertEligible(tx, ctx.ownerId);
     const campaign = await tx.campaign.findUnique({ where: { id: campaignId } });
     assert(
-      campaign && campaign.advertiserId === user.id,
+      campaign && campaign.advertiserId === ctx.ownerId,
       "CAMPAIGN_NOT_FOUND",
       "Campaign not found.",
       404,
@@ -319,7 +337,7 @@ export async function submitCampaign(user: User, campaignId: string) {
         actorId: user.id,
         action: "CAMPAIGN_SUBMITTED",
         targetId: campaignId,
-        details: { state: updated.state },
+        details: { state: updated.state, workspaceOwnerId: ctx.ownerId },
       },
     });
     return { campaign: updated };
@@ -387,17 +405,22 @@ export async function reviewCampaign(admin: User, campaignId: string, input: unk
     return { campaign: updated };
   });
 }
-export async function transitionCampaign(user: User, campaignId: string, input: unknown) {
-  requireRole(user, "ADVERTISER");
+export async function transitionCampaign(
+  user: User,
+  campaignId: string,
+  input: unknown,
+  workspaceId?: string,
+) {
+  const ctx = await resolveAdvertiserWorkspace(user, workspaceId, "MANAGE_CAMPAIGNS");
   const value = z
     .object({ action: z.enum(["PAUSE", "RESUME"]), reason: reason.optional() })
     .strict()
     .parse(input);
   return atomic(async (tx) => {
-    await assertEligible(tx, user.id);
+    await assertEligible(tx, ctx.ownerId);
     const campaign = await tx.campaign.findUnique({ where: { id: campaignId } });
     assert(
-      campaign && campaign.advertiserId === user.id,
+      campaign && campaign.advertiserId === ctx.ownerId,
       "CAMPAIGN_NOT_FOUND",
       "Campaign not found.",
       404,
@@ -434,10 +457,76 @@ export async function transitionCampaign(user: User, campaignId: string, input: 
         actorId: user.id,
         action: value.action === "PAUSE" ? "CAMPAIGN_PAUSED" : "CAMPAIGN_RESUMED",
         targetId: campaignId,
-        details: { state: nextState, ...(value.reason ? { reason: value.reason } : {}) },
+        details: {
+          state: nextState,
+          workspaceOwnerId: ctx.ownerId,
+          ...(value.reason ? { reason: value.reason } : {}),
+        },
       },
     });
     return { campaign: updated };
+  });
+}
+
+export async function duplicateCampaign(user: User, campaignId: string, workspaceId?: string) {
+  const ctx = await resolveAdvertiserWorkspace(user, workspaceId, "MANAGE_CAMPAIGNS");
+  return atomic(async (tx) => {
+    await assertEligible(tx, ctx.ownerId);
+    const source = await tx.campaign.findUnique({ where: { id: campaignId } });
+    assert(
+      source && source.advertiserId === ctx.ownerId,
+      "CAMPAIGN_NOT_FOUND",
+      "Campaign not found.",
+      404,
+    );
+    const now = new Date();
+    const durationMs = Math.max(
+      7 * 24 * 60 * 60 * 1000,
+      source.endAt.getTime() - source.startAt.getTime(),
+    );
+    const copyName = `${source.name.slice(0, 68)} (Copy)`.slice(0, 80);
+    const created = await tx.campaign.create({
+      data: {
+        advertiserId: ctx.ownerId,
+        name: copyName,
+        description: source.description,
+        objective: source.objective,
+        destinationUrl: source.destinationUrl,
+        budgetMinor: source.budgetMinor,
+        dailyBudgetMinor: source.dailyBudgetMinor,
+        unitCostMinor: source.unitCostMinor,
+        currency: source.currency,
+        state: "DRAFT",
+        startAt: now,
+        endAt: new Date(now.getTime() + durationMs),
+        frequencyCap: source.frequencyCap,
+        maxActivitiesPerCreator: source.maxActivitiesPerCreator,
+        isTemplate: false,
+        allowedCountries: source.allowedCountries,
+        creatorCategories: source.creatorCategories,
+        minimumCreatorFollowers: source.minimumCreatorFollowers,
+        maximumCreatorFollowers: source.maximumCreatorFollowers,
+        allowedCities: source.allowedCities,
+        allowedLanguages: source.allowedLanguages,
+        allowedPlatforms: source.allowedPlatforms,
+        requireVerifiedAudience: source.requireVerifiedAudience,
+        minimumReliabilityScore: source.minimumReliabilityScore,
+        deliveryMode: source.deliveryMode,
+        creativeBrief: source.creativeBrief ?? undefined,
+        abVariants: source.abVariants ?? undefined,
+        isDemo: source.isDemo,
+      },
+    });
+    await account(tx, `campaign:${created.id}`, "CAMPAIGN_ESCROW", { campaignId: created.id });
+    await tx.auditLog.create({
+      data: {
+        actorId: user.id,
+        action: "CAMPAIGN_DUPLICATED",
+        targetId: created.id,
+        details: { sourceCampaignId: source.id, workspaceOwnerId: ctx.ownerId },
+      },
+    });
+    return { campaign: created };
   });
 }
 
@@ -463,15 +552,16 @@ const estimateSchema = z
   })
   .strict();
 
-export async function estimateCampaignAudience(user: User, input: unknown) {
-  requireRole(user, "ADVERTISER");
+export async function estimateCampaignAudience(user: User, input: unknown, workspaceId?: string) {
+  const ctx = await resolveAdvertiserWorkspace(user, workspaceId, "VIEW");
   const criteria = estimateSchema.parse(input);
   const candidates = await db.user.findMany({
     where: {
       onboarded: true,
       suspended: false,
       economicHold: false,
-      id: { not: user.id },
+      anonymizedAt: null,
+      id: { not: ctx.ownerId },
       ...(isDevelopment() ? {} : { isDemo: false }),
     },
     select: {
@@ -529,22 +619,48 @@ export async function estimateCampaignAudience(user: User, input: unknown) {
 
 export async function listCampaigns(
   user?: User | null,
-  options: { forCreator?: boolean; objective?: string; category?: string } = {},
+  options: {
+    forCreator?: boolean;
+    objective?: string;
+    category?: string;
+    workspaceId?: string;
+    cursor?: string;
+    limit?: number;
+  } = {},
 ) {
+  let activeWorkspaceOwnerId: string | null = null;
+  if (user && options.workspaceId) {
+    const resolved = await resolveAdvertiserWorkspace(user, options.workspaceId, "VIEW");
+    activeWorkspaceOwnerId = resolved.ownerId;
+  } else if (user?.roles.includes("ADVERTISER")) {
+    activeWorkspaceOwnerId = user.id;
+  }
+
+  const limit = Math.min(Math.max(options.limit ?? 50, 1), 100);
   const [rule, reliability] = await Promise.all([
     user ? activeRules(db).catch(() => null) : Promise.resolve(null),
     user && options.forCreator ? getCreatorReliability(db, user) : Promise.resolve(null),
   ]);
   const campaigns = await db.campaign.findMany({
-    where: user?.roles.includes("ADVERTISER")
-      ? { OR: [{ advertiserId: user.id }, { state: "ACTIVE" }] }
+    where: activeWorkspaceOwnerId
+      ? options.workspaceId
+        ? { advertiserId: activeWorkspaceOwnerId }
+        : { OR: [{ advertiserId: activeWorkspaceOwnerId }, { state: "ACTIVE" }] }
       : { state: "ACTIVE" },
     include: { event: { select: { id: true, title: true, slug: true } } },
-    orderBy: { createdAt: "desc" },
-    take: 50,
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: limit + 1,
+    ...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
   });
-  const filtered = campaigns.filter((campaign) => {
-    if (campaign.advertiserId === user?.id || user?.roles.includes("ADMIN")) return true;
+  const hasMore = campaigns.length > limit;
+  const pageRaw = hasMore ? campaigns.slice(0, limit) : campaigns;
+
+  const filtered = pageRaw.filter((campaign) => {
+    if (
+      (activeWorkspaceOwnerId && campaign.advertiserId === activeWorkspaceOwnerId) ||
+      user?.roles.includes("ADMIN")
+    )
+      return true;
     if (
       user &&
       (!rule ||
@@ -606,7 +722,10 @@ export async function listCampaigns(
       remainingMinor >= campaign.unitCostMinor &&
       campaign.advertiserId !== user?.id;
     const creatorPromoCode = promoMap.get(campaign.id) ?? null;
-    if (campaign.advertiserId === user?.id || user?.roles.includes("ADMIN"))
+    if (
+      (activeWorkspaceOwnerId && campaign.advertiserId === activeWorkspaceOwnerId) ||
+      user?.roles.includes("ADMIN")
+    )
       return {
         ...campaign,
         remainingMinor,
@@ -633,6 +752,7 @@ export async function listCampaigns(
       minimumCreatorFollowers: campaign.minimumCreatorFollowers,
       maximumCreatorFollowers: campaign.maximumCreatorFollowers,
       requireVerifiedAudience: campaign.requireVerifiedAudience,
+      maxActivitiesPerCreator: campaign.maxActivitiesPerCreator,
       state: campaign.state,
       startAt: campaign.startAt,
       endAt: campaign.endAt,
@@ -646,5 +766,8 @@ export async function listCampaigns(
     };
   });
   mapped.sort((a, b) => b.relevanceScore - a.relevanceScore);
-  return { campaigns: mapped };
+  return {
+    campaigns: mapped,
+    nextCursor: hasMore ? pageRaw[pageRaw.length - 1]!.id : null,
+  };
 }

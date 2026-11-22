@@ -33,6 +33,7 @@ export async function POST(
         provider,
         Buffer.concat(chunks),
         request.headers.get("x-ruvora-signature") ?? "",
+        request.headers.get("x-ruvora-workspace"),
       ),
       id,
       202,

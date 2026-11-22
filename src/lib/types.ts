@@ -12,6 +12,7 @@ export interface AbVariant {
   id: string;
   label: string;
   destinationUrl: string;
+  weight?: number;
 }
 export interface User {
   id: string;
@@ -25,6 +26,10 @@ export interface User {
   city?: string | null;
   preferredLanguages?: string[];
   autoMonetize?: boolean;
+  directoryOptIn?: boolean;
+  kycStatus?: string;
+  billingEntityName?: string | null;
+  vatNumber?: string | null;
   profileTheme?: ProfileTheme;
   bio: string | null;
   category: string | null;
@@ -58,6 +63,8 @@ export interface Campaign {
   deliveryMode?: "OPEN" | "UGC_BRIEF";
   creativeBrief?: CreativeBrief | null;
   abVariants?: AbVariant[] | null;
+  maxActivitiesPerCreator?: number | null;
+  isTemplate?: boolean;
   budgetRemainingPct?: number;
   relevanceScore?: number;
   creatorPromoCode?: { code: string; discountLabel: string; usesCount: number } | null;

@@ -64,6 +64,9 @@ const profileSchema = z
       .max(6)
       .optional(),
     autoMonetize: z.boolean().optional(),
+    directoryOptIn: z.boolean().optional(),
+    billingEntityName: z.string().trim().max(120).optional(),
+    vatNumber: z.string().trim().max(40).optional(),
     profileTheme: z.enum(["obsidian", "champagne", "emerald-dusk", "amber-glow"]).optional(),
     ageEligible: z.literal(true),
     termsAccepted: z.literal(true),
@@ -120,6 +123,11 @@ export async function saveProfile(user: User, input: unknown) {
           ? { preferredLanguages: value.preferredLanguages }
           : {}),
         ...(value.autoMonetize !== undefined ? { autoMonetize: value.autoMonetize } : {}),
+        ...(value.directoryOptIn !== undefined ? { directoryOptIn: value.directoryOptIn } : {}),
+        ...(value.billingEntityName !== undefined
+          ? { billingEntityName: value.billingEntityName || null }
+          : {}),
+        ...(value.vatNumber !== undefined ? { vatNumber: value.vatNumber || null } : {}),
         ...(value.profileTheme !== undefined ? { profileTheme: value.profileTheme } : {}),
         ageEligible: true,
         termsAcceptedAt: current.termsAcceptedAt ?? new Date(),

@@ -43,6 +43,11 @@ import {
 import { ProfileForm } from "./auth";
 import { AdvertiserScreen, OpportunitiesScreen } from "./campaigns";
 import { AppContext, useDashboard } from "./app-context";
+import {
+  ActivityDisputePanel,
+  EmbeddableWidgetCard,
+  WalletPayoutsAndStatementPanel,
+} from "./pass05-creator";
 import { CreatorAnalytics, ReferralsScreen } from "./growth";
 import { EventStudio } from "./event-studio";
 import { SecurityScreen } from "./security";
@@ -285,6 +290,7 @@ function CreatorScreen({ data, reload }: { data: Dashboard; reload: () => Promis
       </div>
       <AudienceVerificationCard data={data} reload={reload} />
       <CreatorPromoCodesPanel handle={data.user.handle} />
+      <EmbeddableWidgetCard handle={data.user.handle} />
       <CreatorAnalytics />
       <div className="profile-studio-card">
         <div>
@@ -332,7 +338,7 @@ function CreatorScreen({ data, reload }: { data: Dashboard; reload: () => Promis
     </>
   );
 }
-function WalletScreen({ data }: { data: Dashboard }) {
+function WalletScreen({ data, reload }: { data: Dashboard; reload: () => Promise<void> }) {
   const { t, locale } = useLocale();
   return (
     <>
@@ -340,6 +346,11 @@ function WalletScreen({ data }: { data: Dashboard }) {
       <Stats data={data} />
       <p className="panel-description">{t("walletNote")}</p>
       <WalletCyclePanel data={data} />
+      <WalletPayoutsAndStatementPanel
+        user={data.user}
+        availableMinor={data.summary.moneyMinor}
+        onPayoutCreated={() => void reload()}
+      />
       <div className="panel">
         <div className="panel-header">
           <h3>{t("ledger")}</h3>
@@ -464,7 +475,7 @@ export function DashboardScreen({
   if (screen === "advertiser") return <AdvertiserScreen data={data} reload={reload} />;
   if (screen === "opportunities")
     return <OpportunitiesScreen preferredCampaignId={preferredCampaignId} />;
-  if (screen === "wallet") return <WalletScreen data={data} />;
+  if (screen === "wallet") return <WalletScreen data={data} reload={reload} />;
   if (screen === "events") return <AppEvents />;
   if (screen === "activity")
     return (
@@ -473,6 +484,7 @@ export function DashboardScreen({
         <div className="panel">
           <ActivityTable items={data.activities} />
         </div>
+        <ActivityDisputePanel activities={data.activities} />
       </>
     );
   if (screen === "settings")
