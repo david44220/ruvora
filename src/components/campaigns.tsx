@@ -13,9 +13,20 @@ import { AdvertiserAnalytics, TrackedShare } from "./growth";
 import type { ManagedEvent } from "./event-studio";
 import { useDashboard } from "./app-context";
 export function CampaignForm({ onCreated }: { onCreated: () => void }) {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const action = useAction();
   const events = useResource<{ events: ManagedEvent[] }>("/events/manage");
+  const [budgetVal, setBudgetVal] = useState("");
+  const [dailyVal, setDailyVal] = useState("");
+  const [unitVal, setUnitVal] = useState("");
+  const previewEur = (raw: string) => {
+    if (!/^\d+$/.test(raw.trim())) return null;
+    try {
+      return `${t("p2FormattedAmount")}: ${minorMoney(raw.trim(), locale)}`;
+    } catch {
+      return null;
+    }
+  };
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
@@ -74,15 +85,41 @@ export function CampaignForm({ onCreated }: { onCreated: () => void }) {
           </label>
           <label className="field">
             {t("budget")}
-            <input name="budgetMinor" type="number" min="1" step="1" required />
+            <input
+              name="budgetMinor"
+              type="number"
+              min="1"
+              step="1"
+              required
+              onChange={(e) => setBudgetVal(e.target.value)}
+            />
+            {previewEur(budgetVal) && (
+              <span className="money-preview">{previewEur(budgetVal)}</span>
+            )}
           </label>
           <label className="field">
             {t("dailyBudget")}
-            <input name="dailyBudgetMinor" type="number" min="1" step="1" required />
+            <input
+              name="dailyBudgetMinor"
+              type="number"
+              min="1"
+              step="1"
+              required
+              onChange={(e) => setDailyVal(e.target.value)}
+            />
+            {previewEur(dailyVal) && <span className="money-preview">{previewEur(dailyVal)}</span>}
           </label>
           <label className="field">
             {t("unitCost")}
-            <input name="unitCostMinor" type="number" min="1" step="1" required />
+            <input
+              name="unitCostMinor"
+              type="number"
+              min="1"
+              step="1"
+              required
+              onChange={(e) => setUnitVal(e.target.value)}
+            />
+            {previewEur(unitVal) && <span className="money-preview">{previewEur(unitVal)}</span>}
           </label>
           <label className="field">
             {t("p2LinkedCampaign")}
@@ -162,6 +199,13 @@ function CampaignCard({
     );
     if (result) await reload();
   }
+  async function transition(next: "PAUSE" | "RESUME") {
+    const result = await action.run(
+      () => api(`/campaigns/${campaign.id}/transition`, { action: next }),
+      t(next === "PAUSE" ? "p2CampaignPaused" : "p2CampaignResumed"),
+    );
+    if (result) await reload();
+  }
   return (
     <article className="campaign-card">
       <div className="panel-header">
@@ -223,6 +267,28 @@ function CampaignCard({
           {!funded && !fundingEnabled && (
             <p className="field-hint">{t("campaignFundingUnavailable")}</p>
           )}
+        </div>
+      )}
+      {campaign.state === "ACTIVE" && (
+        <div className="form-actions">
+          <button
+            className="button button-small button-secondary"
+            onClick={() => transition("PAUSE")}
+            disabled={action.busy}
+          >
+            {t(action.busy ? "working" : "p2PauseCampaign")}
+          </button>
+        </div>
+      )}
+      {campaign.state === "PAUSED" && (
+        <div className="form-actions">
+          <button
+            className="button button-small"
+            onClick={() => transition("RESUME")}
+            disabled={action.busy}
+          >
+            {t(action.busy ? "working" : "p2ResumeCampaign")}
+          </button>
         </div>
       )}
       {action.notice && <Notice message={action.notice} error={action.failed} />}

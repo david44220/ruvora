@@ -357,7 +357,9 @@ export function EventPage({ slug, entryUrl }: { slug: string; entryUrl?: string 
                     <h3>{t("rules")}</h3>
                     <p>
                       {e.localizedContent?.[locale]?.rules ||
-                        (typeof e.rules === "string" ? e.rules : t("eventRuleText"))}
+                        (typeof e.rules === "string"
+                          ? e.rules
+                          : e.rules?.[locale] || e.rules?.en || t("eventRuleText"))}
                     </p>
                     <p className="field-hint">
                       {t("p2RulesVersion")}: {e.configVersion}

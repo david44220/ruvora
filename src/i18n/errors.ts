@@ -369,6 +369,14 @@ const errors: Record<string, [string, string]> = {
     "You cannot participate in your own advertising campaign.",
     "Vous ne pouvez pas participer à votre propre campagne publicitaire.",
   ],
+  INVALID_CAMPAIGN_STATE: [
+    "This campaign cannot change to that status from its current state.",
+    "Cette campagne ne peut pas changer vers cet état depuis son statut actuel.",
+  ],
+  FINALIZED_HISTORY: [
+    "Activity included in a finalized distribution is immutable and requires a separately reviewed recovery operation.",
+    "Une activité incluse dans une distribution finalisée est immuable et requiert une opération de récupération distincte.",
+  ],
 };
 export function errorMessage(code: string, locale: Locale) {
   return (

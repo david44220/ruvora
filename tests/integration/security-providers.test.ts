@@ -3,16 +3,25 @@ import { randomUUID } from "node:crypto";
 import type { Role, User } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { atomic, db } from "../../src/server/db";
-import { login, tokenDigest, userFromToken } from "../../src/server/auth";
+import {
+  changePassword,
+  login,
+  pruneExpiredRateLimits,
+  tokenDigest,
+  userFromToken,
+} from "../../src/server/auth";
 import { hashPassword } from "../../src/server/security/password";
 import {
   beginMfaEnrollment,
   confirmMfaEnrollment,
   recoverMfa,
+  requireAdminMfaSession,
   requireFreshMfa,
   revokeSessions,
   stepUp,
 } from "../../src/server/security/mfa";
+import { setAccountHold } from "../../src/server/views";
+import { activeRules } from "../../src/server/rules";
 import { createTotpSecret, totpCode } from "../../src/server/security/totp";
 import { openSecret, sealSecret, secretDigest } from "../../src/server/security/crypto";
 import {
@@ -655,5 +664,97 @@ describe("provider money and signed conversion boundaries", () => {
       status: "DELIVERED",
       attempts: 2,
     });
+  });
+  it("changes password with scrypt2, revokes other sessions, and keeps the current session active", async () => {
+    const user = await makeUser();
+    const keepToken = await signIn(user);
+    const otherToken = await signIn(user);
+    const nextPassword = "Updated-Security-Passphrase-2026!";
+    await expect(
+      changePassword(user, keepToken, {
+        currentPassword: "Wrong-Current-Password-2026!",
+        newPassword: nextPassword,
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_CREDENTIALS" });
+    const changed = await changePassword(user, keepToken, {
+      currentPassword: password,
+      newPassword: nextPassword,
+    });
+    expect(changed.ok).toBe(true);
+    expect(changed.revokedOtherSessions).toBeGreaterThanOrEqual(1);
+    expect((await userFromToken(keepToken))?.id).toBe(user.id);
+    expect(await userFromToken(otherToken)).toBeNull();
+    const fresh = await db.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(fresh.passwordHash.startsWith("scrypt2$")).toBe(true);
+    expect((await login({ email: user.email, password: nextPassword })).user.id).toBe(user.id);
+  });
+  it("enforces requireAdminMfaSession on password-only admin sessions and allows MFA-verified sessions", async () => {
+    const plainAdminToken = await signIn(admin);
+    await expect(requireAdminMfaSession(admin, plainAdminToken)).rejects.toMatchObject({
+      code: "FRESH_AUTH_REQUIRED",
+    });
+    const verified = await requireAdminMfaSession(admin, adminToken);
+    expect(verified.sessionId).toBeTruthy();
+    expect(verified.mfaVerifiedAt).not.toBeNull();
+  });
+  it("prunes expired rate-limit windows while preserving active buckets", async () => {
+    const expiredKey = `expired:${id()}`;
+    const activeKey = `active:${id()}`;
+    await db.rateLimit.createMany({
+      data: [
+        { key: expiredKey, count: 3, windowEnd: new Date(Date.now() - 60_000) },
+        { key: activeKey, count: 1, windowEnd: new Date(Date.now() + 600_000) },
+      ],
+    });
+    const result = await pruneExpiredRateLimits();
+    expect(result.count).toBeGreaterThanOrEqual(1);
+    expect(await db.rateLimit.findUnique({ where: { key: expiredKey } })).toBeNull();
+    expect(await db.rateLimit.findUnique({ where: { key: activeKey } })).not.toBeNull();
+  });
+  it("consumes dual approval atomically on setAccountHold and blocks unapproved non-dev holds", async () => {
+    const target = await makeUser();
+    const { record } = await activeRules(db);
+    const { approval } = await requestApproval(admin, adminToken, {
+      operation: "ACCOUNT_HOLD",
+      targetId: target.id,
+      payload: { economicHold: true, suspended: true },
+      ruleVersion: record.version,
+      reason,
+    });
+    await reviewApproval(reviewer, reviewerToken, approval.id, {
+      decision: "APPROVED",
+      reason,
+    });
+    const updated = await setAccountHold(admin, target.id, {
+      economicHold: true,
+      suspended: true,
+      reason,
+      approvalId: approval.id,
+    });
+    expect(updated.user.economicHold).toBe(true);
+    expect(
+      (await db.financialApproval.findUniqueOrThrow({ where: { id: approval.id } })).state,
+    ).toBe("EXECUTED");
+    // Replay of executed approval must fail
+    await expect(
+      setAccountHold(admin, target.id, {
+        economicHold: true,
+        suspended: true,
+        reason,
+        approvalId: approval.id,
+      }),
+    ).rejects.toMatchObject({ code: "APPROVAL_REQUIRED" });
+    // Outside development, omitting approvalId must fail closed
+    vi.stubEnv("APP_ENV", "staging");
+    try {
+      await expect(
+        setAccountHold(admin, target.id, {
+          economicHold: false,
+          reason,
+        }),
+      ).rejects.toMatchObject({ code: "APPROVAL_REQUIRED" });
+    } finally {
+      vi.stubEnv("APP_ENV", "development");
+    }
   });
 });

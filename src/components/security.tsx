@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useLocale } from "@/i18n/provider";
 import { api } from "@/lib/api";
+import { encodeQr } from "@/lib/qr";
 import { useAction, useResource } from "@/lib/hooks";
 import { PageTitle } from "./workspace-ui";
 import { Notice, Loading, Empty, PublicNav, Footer } from "./ui";
@@ -15,15 +16,23 @@ interface SecurityData {
   recoveryCodesRemaining: number;
   sessions: { id: string; createdAt: string; expiresAt: string; mfaVerifiedAt: string | null }[];
 }
-function PasswordField() {
+function PasswordField({
+  name = "password",
+  labelKey = "password",
+  autoComplete = "current-password",
+}: {
+  name?: string;
+  labelKey?: "password" | "p2CurrentPassword" | "p2NewPassword";
+  autoComplete?: string;
+}) {
   const { t } = useLocale();
   return (
     <label className="field">
-      {t("password")}
+      {t(labelKey)}
       <input
-        name="password"
+        name={name}
         type="password"
-        autoComplete="current-password"
+        autoComplete={autoComplete}
         minLength={12}
         maxLength={128}
         required
@@ -58,6 +67,7 @@ export function SecurityScreen() {
     otpauthUrl: string;
   } | null>(null);
   const [recovery, setRecovery] = useState<string[]>([]);
+  const [revokeTarget, setRevokeTarget] = useState("");
   const [mail, setMail] = useState<
     | {
         id: string;
@@ -67,9 +77,27 @@ export function SecurityScreen() {
       }[]
     | null
   >(null);
+  const qr = enrollment ? encodeQr(enrollment.otpauthUrl) : null;
   async function form(e: FormEvent<HTMLFormElement>, path: string) {
     e.preventDefault();
-    const values = Object.fromEntries(new FormData(e.currentTarget));
+    const formEl = e.currentTarget;
+    const raw = Object.fromEntries(new FormData(formEl));
+    const payload: Record<string, unknown> = { ...raw };
+    if (path.endsWith("revoke") && !payload.sessionId) delete payload.sessionId;
+    if (path.endsWith("confirm")) payload.enrollmentId = enrollment!.enrollmentId;
+    const revokingSelfOrAll =
+      path.endsWith("recover") ||
+      (path.endsWith("revoke") &&
+        (!payload.sessionId || payload.sessionId === state.data?.currentSessionId));
+    const successKey = path.endsWith("step-up")
+      ? "p2StepUpSuccess"
+      : path.endsWith("confirm")
+        ? "p2MfaConfirmed"
+        : path.endsWith("password/change")
+          ? "p2PasswordChanged"
+          : path.endsWith("revoke") && !revokingSelfOrAll
+            ? "p2OtherSessionRevoked"
+            : "saved";
     const result = await action.run(
       () =>
         api<{
@@ -77,17 +105,8 @@ export function SecurityScreen() {
           secret?: string;
           otpauthUrl?: string;
           recoveryCodes?: string[];
-        }>(path, {
-          ...values,
-          ...(path.endsWith("confirm") ? { enrollmentId: enrollment!.enrollmentId } : {}),
-        }),
-      t(
-        path.endsWith("step-up")
-          ? "p2StepUpSuccess"
-          : path.endsWith("confirm")
-            ? "p2MfaConfirmed"
-            : "saved",
-      ),
+        }>(path, payload),
+      t(successKey),
     );
     if (result) {
       if (result.enrollmentId)
@@ -96,10 +115,14 @@ export function SecurityScreen() {
         setRecovery(result.recoveryCodes);
         setEnrollment(null);
       }
-      if (path.endsWith("revoke") || path.endsWith("recover")) {
+      if (path.endsWith("password/change")) formEl.reset();
+      if (revokingSelfOrAll) {
         router.push("/login");
         router.refresh();
-      } else await state.reload();
+      } else {
+        setRevokeTarget("");
+        await state.reload();
+      }
     }
   }
   if (state.loading) return <Loading />;
@@ -138,6 +161,22 @@ export function SecurityScreen() {
           {enrollment && (
             <form className="form-stack" onSubmit={(e) => form(e, "/security/mfa/confirm")}>
               <p className="panel-description">{t("p2MfaSetup")}</p>
+              {qr && (
+                <div className="mfa-qr">
+                  <p className="field-hint">{t("p2ScanQr")}</p>
+                  <svg
+                    viewBox={qr.viewBox}
+                    role="img"
+                    aria-label={t("p2QrAlt")}
+                    width={196}
+                    height={196}
+                    shapeRendering="crispEdges"
+                  >
+                    <rect width="100%" height="100%" fill="#ffffff" />
+                    <path d={qr.svgPath} fill="#11100e" />
+                  </svg>
+                </div>
+              )}
               <label className="field">
                 {t("p2MfaSecret")}
                 <input readOnly value={enrollment.secret} autoComplete="off" />
@@ -184,9 +223,48 @@ export function SecurityScreen() {
             ))}
           </div>
           <form className="form-stack" onSubmit={(e) => form(e, "/security/sessions/revoke")}>
+            {state.data.sessions.length > 1 && (
+              <label className="field">
+                {t("p2RevokeTarget")}
+                <select
+                  name="sessionId"
+                  value={revokeTarget}
+                  onChange={(e) => setRevokeTarget(e.target.value)}
+                >
+                  <option value="">{t("p2AllSessions")}</option>
+                  {state.data.sessions.map((session) => (
+                    <option key={session.id} value={session.id}>
+                      {session.id === state.data!.currentSessionId
+                        ? t("p2CurrentSession")
+                        : t("p2OtherSession")}{" "}
+                      · {new Date(session.createdAt).toLocaleString(locale)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <PasswordField />
             <button className="button button-secondary button-small" disabled={action.busy}>
-              {t("p2RevokeSessions")}
+              {t(revokeTarget ? "p2RevokeSelected" : "p2RevokeSessions")}
+            </button>
+          </form>
+        </section>
+        <section className="panel">
+          <h3>{t("p2ChangePassword")}</h3>
+          <p className="panel-description">{t("p2ChangePasswordIntro")}</p>
+          <form className="form-stack" onSubmit={(e) => form(e, "/security/password/change")}>
+            <PasswordField
+              name="currentPassword"
+              labelKey="p2CurrentPassword"
+              autoComplete="current-password"
+            />
+            <PasswordField
+              name="newPassword"
+              labelKey="p2NewPassword"
+              autoComplete="new-password"
+            />
+            <button className="button button-small" disabled={action.busy}>
+              {t("p2ChangePassword")}
             </button>
           </form>
         </section>

@@ -1,7 +1,8 @@
 import "dotenv/config";
 import { test, expect, type Page, type BrowserContext } from "@playwright/test";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { en, fr } from "../../src/i18n/messages";
+import { totpCode, encodeBase32, decodeBase32 } from "../../src/server/security/totp";
 
 type Role = "USER" | "CREATOR" | "ADVERTISER";
 type Campaign = { id: string; name: string; eventId?: string | null; canParticipate: boolean };
@@ -55,6 +56,25 @@ async function login(page: Page, email: string, password: string, french = false
   await page.locator('input[name="password"]').fill(password);
   await page.getByRole("button", { name: french ? fr.login : en.login, exact: true }).click();
   await expect(page).toHaveURL(/app$/);
+}
+async function stepUpAdmin(page: Page, origin: string, password: string) {
+  const me = (await dashboard(page)).user;
+  const secret = encodeBase32(
+    createHmac("sha256", decodeBase32(process.env.DEMO_TOTP_SECRET!))
+      .update("ruvora-admin:" + me.id)
+      .digest()
+      .subarray(0, 20),
+  );
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await page.request.post("/api/security/mfa/step-up", {
+      headers: { Origin: origin },
+      data: { password, code: totpCode(secret) },
+    });
+    if (res.ok()) return;
+    expect((await res.json()).error.code).toBe("INVALID_MFA_CODE");
+    await page.waitForTimeout(30000 - (Date.now() % 30000) + 100);
+  }
+  throw new Error("Unable to step up demo admin MFA.");
 }
 function cardFor(page: Page, name: string) {
   return page
@@ -211,6 +231,7 @@ test("real user, creator, advertiser and independent admin browser journey", asy
     });
 
     await login(adminPage, "admin@ruvora.test", demoPassword);
+    await stepUpAdmin(adminPage, baseURL, demoPassword);
     await adminPage.goto("/admin");
     const snapshot = await (await adminPage.request.get("/api/admin")).json();
     const rate = snapshot.rules.config.reward.rates.QUALIFIED_VIEW as {

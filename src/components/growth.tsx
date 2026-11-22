@@ -225,7 +225,7 @@ export function CreatorAnalytics() {
               <h3>{t("p2Funnel")}</h3>
             </div>
             <span className="tag">
-              {daily.length} {t("p2Days")}
+              {daily.length} {t(daily.length === 1 ? "p2DaySingular" : "p2Days")}
             </span>
           </div>
           {s.profileViews === 0 ? (
@@ -372,7 +372,7 @@ export function AdvertiserAnalytics() {
                 <dd>{c.rejectedActions}</dd>
               </div>
               <div>
-                <dt>{t("roleCREATOR")}</dt>
+                <dt>{t("creators")}</dt>
                 <dd>{c.creatorCount}</dd>
               </div>
             </dl>
@@ -415,7 +415,7 @@ export function AdminGrowth() {
         <Stat label={t("p2Views")} value={s.profileViews} />
         <Stat label={t("p2Registrations")} value={s.registrations} />
         <Stat label={t("p2ReferralCount")} value={s.referralRegistrations} />
-        <Stat label={t("p2Share")} value={s.eventShares} />
+        <Stat label={t("p2EventShares")} value={s.eventShares} />
       </div>
       <div className="metric-card-list">
         {rest.topCreators.map((c) => (

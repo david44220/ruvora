@@ -23,9 +23,10 @@ export interface ManagedEvent extends RuvoraEvent {
 }
 
 export function DevelopmentDeposit({ onFunded }: { onFunded: () => void }) {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const action = useAction();
   const key = useRef<string | null>(null);
+  const [depositRaw, setDepositRaw] = useState("");
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     key.current ??= crypto.randomUUID();
@@ -50,7 +51,20 @@ export function DevelopmentDeposit({ onFunded }: { onFunded: () => void }) {
       <form onSubmit={submit} className="inline-form">
         <label className="field">
           {t("p2DepositAmount")}
-          <input name="amountMinor" type="number" min="1" step="1" max="100000000" required />
+          <input
+            name="amountMinor"
+            type="number"
+            min="1"
+            step="1"
+            max="100000000"
+            required
+            onChange={(e) => setDepositRaw(e.target.value)}
+          />
+          {/^\d+$/.test(depositRaw.trim()) && (
+            <span className="money-preview">
+              {t("p2FormattedAmount")}: {minorMoney(depositRaw.trim(), locale)}
+            </span>
+          )}
         </label>
         <button className="button button-small button-secondary" disabled={action.busy}>
           {t(action.busy ? "working" : "p2Deposit")}
@@ -61,10 +75,17 @@ export function DevelopmentDeposit({ onFunded }: { onFunded: () => void }) {
   );
 }
 function EventCreation({ onCreated }: { onCreated: () => void }) {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const { data } = useDashboard();
   const action = useAction();
   const key = useRef(crypto.randomUUID());
+  const [prizeRaw, setPrizeRaw] = useState("0");
+  const [tiersRaw, setTiersRaw] = useState("5000,3000,2000");
+  const tierNumbers = tiersRaw
+    .split(",")
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isFinite(n) && n >= 0);
+  const tierSum = tierNumbers.reduce((acc, n) => acc + n, 0);
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
@@ -190,8 +211,14 @@ function EventCreation({ onCreated }: { onCreated: () => void }) {
               step="1"
               defaultValue="0"
               readOnly={!data?.user.roles.includes("ADVERTISER")}
+              onChange={(e) => setPrizeRaw(e.target.value)}
               required
             />
+            {/^\d+$/.test(prizeRaw.trim()) && (
+              <span className="money-preview">
+                {t("p2FormattedAmount")}: {minorMoney(prizeRaw.trim(), locale)}
+              </span>
+            )}
           </label>
           <label className="field">
             {t("p2ParticipantCap")}
@@ -217,7 +244,17 @@ function EventCreation({ onCreated }: { onCreated: () => void }) {
           </label>
           <label className="field">
             {t("p2RewardTiers")}
-            <input name="tiers" defaultValue="5000,3000,2000" required />
+            <input
+              name="tiers"
+              defaultValue="5000,3000,2000"
+              onChange={(e) => setTiersRaw(e.target.value)}
+              required
+            />
+            <span className="money-preview">
+              {t("p2TierTotal")}:{" "}
+              {tierNumbers.map((n) => `${(n / 100).toLocaleString(locale)}%`).join(" + ")} ={" "}
+              {(tierSum / 100).toLocaleString(locale)}%
+            </span>
             <span className="field-hint">{t("p2TierNote")}</span>
           </label>
           <label className="field">

@@ -389,7 +389,7 @@ function WalletScreen({ data }: { data: Dashboard }) {
               <tbody>
                 {data.rewardUnits.map((ru, i) => (
                   <tr key={`${ru.category}-${ru.state}-${i}`}>
-                    <td>{t(`role${ru.category}` as MessageKey) || ru.category}</td>
+                    <td>{t(`cat${ru.category}` as MessageKey) || ru.category}</td>
                     <td>
                       <Status value={ru.state} />
                     </td>

@@ -7,13 +7,16 @@ import { db } from "./db";
 import { AppError, assert } from "./errors";
 import {
   assertOrigin,
+  changePassword,
+  clientIp,
   getCurrentUser,
+  limitRate,
   login,
   logout,
   publicUser,
   register,
   requireUser,
-  SESSION_COOKIE,
+  sessionCookieName,
 } from "./auth";
 import { getPublicProfile, saveProfile, saveProfileModules } from "./profiles";
 import {
@@ -22,6 +25,7 @@ import {
   listCampaigns,
   reviewCampaign,
   submitCampaign,
+  transitionCampaign,
 } from "./campaigns";
 import { reviewActivity, reverseActivity, submitActivity } from "./activities";
 import {
@@ -54,6 +58,7 @@ import {
   recoverMfa,
   securityStatus,
   revokeSessions,
+  requireAdminMfaSession,
   requireFreshMfa,
 } from "./security/mfa";
 import {
@@ -116,11 +121,14 @@ export function response(value: unknown, requestId: string, status = 200) {
 export async function handleApi(request: NextRequest, path: string[]) {
   const requestId = randomUUID();
   const route = path.join("/");
+  const ip = clientIp(request);
   const tokens = {
     attributionToken: request.cookies.get(ATTRIBUTION_COOKIE)?.value,
     visitorToken: request.cookies.get(VISITOR_COOKIE)?.value,
   };
-  const sessionToken = request.cookies.get(SESSION_COOKIE)?.value;
+  const cookieName = sessionCookieName();
+  const sessionToken =
+    request.cookies.get(cookieName)?.value ?? request.cookies.get("ruvora_session")?.value;
   try {
     if (route !== "health") validateRuntimeEnvironment();
     if (request.method === "GET") {
@@ -152,8 +160,11 @@ export async function handleApi(request: NextRequest, path: string[]) {
         const data = await paymentSummary(await requireUser());
         return response({ ...data, development: data.developmentFundingAvailable }, requestId);
       }
-      if (route === "admin/webhooks")
-        return response(await listWebhookEvents(await requireUser()), requestId);
+      if (route === "admin/webhooks") {
+        const user = await requireUser();
+        if (!isDevelopment()) await requireAdminMfaSession(user, sessionToken);
+        return response(await listWebhookEvents(user), requestId);
+      }
       if (route === "events/manage")
         return response(await listManagedEvents(await requireUser()), requestId);
       if (route === "security")
@@ -166,14 +177,20 @@ export async function handleApi(request: NextRequest, path: string[]) {
         );
       if (route === "security/mailbox")
         return response(await developmentMailbox(await requireUser()), requestId);
-      if (route === "admin/approvals")
-        return response(await listApprovals(await requireUser()), requestId);
+      if (route === "admin/approvals") {
+        const user = await requireUser();
+        if (!isDevelopment()) await requireAdminMfaSession(user, sessionToken);
+        return response(await listApprovals(user), requestId);
+      }
       if (route === "analytics/creator")
         return response(await getCreatorAnalytics(await requireUser()), requestId);
       if (route === "analytics/advertiser")
         return response(await getAdvertiserAnalytics(await requireUser()), requestId);
-      if (route === "admin/growth")
-        return response(await getGrowthAnalytics(await requireUser()), requestId);
+      if (route === "admin/growth") {
+        const user = await requireUser();
+        if (!isDevelopment()) await requireAdminMfaSession(user, sessionToken);
+        return response(await getGrowthAnalytics(user), requestId);
+      }
       if (route === "events") return response(await listEvents(), requestId);
       if (path[0] === "events" && path.length === 2)
         return response(await getEvent(path[1]!, await getCurrentUser()), requestId);
@@ -188,12 +205,17 @@ export async function handleApi(request: NextRequest, path: string[]) {
         );
       if (route === "dashboard")
         return response(await getDashboard(await requireUser()), requestId);
-      if (route === "admin") return response(await getAdmin(await requireUser()), requestId);
+      if (route === "admin") {
+        const user = await requireUser();
+        if (!isDevelopment()) await requireAdminMfaSession(user, sessionToken);
+        return response(await getAdmin(user), requestId);
+      }
     }
     if (request.method === "POST") {
       assertOrigin(request);
       const input = await readJson(request);
       if (route === "attribution/start") {
+        await limitRate("attribution-start-ip", ip, 120, 60);
         const { slug } = z
           .object({ slug: z.string().min(12).max(64) })
           .strict()
@@ -214,13 +236,13 @@ export async function handleApi(request: NextRequest, path: string[]) {
         return output;
       }
       if (route === "security/password/request")
-        return response(await requestPasswordReset(input), requestId);
+        return response(await requestPasswordReset(input, ip), requestId);
       if (route === "security/password/reset")
         return response(await redeemPasswordReset(input), requestId);
       if (route === "security/email/redeem")
         return response(await redeemEmailVerification(input), requestId);
       if (route === "auth/register" || route === "auth/login") {
-        const result = await (route === "auth/register" ? register(input) : login(input));
+        const result = await (route === "auth/register" ? register(input, ip) : login(input, ip));
         const output = response(
           {
             user: result.user,
@@ -229,7 +251,7 @@ export async function handleApi(request: NextRequest, path: string[]) {
           requestId,
           route === "auth/register" ? 201 : 200,
         );
-        output.cookies.set(SESSION_COOKIE, result.session.token, {
+        output.cookies.set(cookieName, result.session.token, {
           httpOnly: true,
           secure: !isDevelopment(),
           sameSite: "lax",
@@ -249,9 +271,9 @@ export async function handleApi(request: NextRequest, path: string[]) {
         return output;
       }
       if (route === "auth/logout") {
-        await logout(request.cookies.get(SESSION_COOKIE)?.value);
+        await logout(sessionToken);
         const output = response({ ok: true }, requestId);
-        output.cookies.set(SESSION_COOKIE, "", {
+        output.cookies.set(cookieName, "", {
           httpOnly: true,
           secure: !isDevelopment(),
           sameSite: "lax",
@@ -272,6 +294,8 @@ export async function handleApi(request: NextRequest, path: string[]) {
         return response(await saveProfileModules(user, input), requestId);
       if (route === "security/email/request")
         return response(await requestEmailVerification(user), requestId);
+      if (route === "security/password/change")
+        return response(await changePassword(user, sessionToken, input), requestId);
       if (route === "security/mfa/begin")
         return response(await beginMfaEnrollment(user, sessionToken, input), requestId);
       if (route === "security/mfa/confirm")
@@ -298,7 +322,10 @@ export async function handleApi(request: NextRequest, path: string[]) {
         return response(await transitionEvent(user, path[1]!, input), requestId);
       if (path[0] === "admin" && path[1] === "events" && path.length === 4) {
         const id = path[2]!;
-        if (path[3] === "review") return response(await reviewEvent(user, id, input), requestId);
+        if (path[3] === "review") {
+          await requireFreshMfa(user, sessionToken);
+          return response(await reviewEvent(user, id, input), requestId);
+        }
         if (path[3] === "preview")
           return response(await createEventSettlementPreview(user, id), requestId);
         if (path[3] === "settle") {
@@ -313,7 +340,7 @@ export async function handleApi(request: NextRequest, path: string[]) {
       if (
         route === "admin/rules" ||
         route === "admin/distributions/finalize" ||
-        (path[0] === "admin" && ["reverse", "hold"].includes(path.at(-1) || ""))
+        (path[0] === "admin" && ["review", "reverse", "hold"].includes(path.at(-1) || ""))
       )
         await requireFreshMfa(user, sessionToken);
       if (route === "profile") return response(await saveProfile(user, input), requestId);
@@ -322,6 +349,8 @@ export async function handleApi(request: NextRequest, path: string[]) {
         return response(await fundCampaign(user, path[1]!, input), requestId);
       if (path[0] === "campaigns" && path.length === 3 && path[2] === "submit")
         return response(await submitCampaign(user, path[1]!), requestId);
+      if (path[0] === "campaigns" && path.length === 3 && path[2] === "transition")
+        return response(await transitionCampaign(user, path[1]!, input), requestId);
       if (route === "activities")
         return response(await submitActivity(user, input, tokens), requestId, 201);
       if (path[0] === "events" && path.length === 3 && path[2] === "join")

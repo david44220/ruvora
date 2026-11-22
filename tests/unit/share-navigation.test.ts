@@ -4,6 +4,8 @@ import { z } from "zod";
 const mocks = vi.hoisted(() => ({
   startAttribution: vi.fn(),
   getCurrentUser: vi.fn(),
+  limitRate: vi.fn(),
+  clientIp: vi.fn(),
   isDevelopment: vi.fn(),
   validateRuntimeEnvironment: vi.fn(),
 }));
@@ -12,7 +14,11 @@ vi.mock("@/server/attribution", () => ({
   VISITOR_COOKIE: "ruvora_visitor",
   startAttribution: mocks.startAttribution,
 }));
-vi.mock("@/server/auth", () => ({ getCurrentUser: mocks.getCurrentUser }));
+vi.mock("@/server/auth", () => ({
+  getCurrentUser: mocks.getCurrentUser,
+  limitRate: mocks.limitRate,
+  clientIp: mocks.clientIp,
+}));
 vi.mock("@/server/environment", () => ({
   isDevelopment: mocks.isDevelopment,
   validateRuntimeEnvironment: mocks.validateRuntimeEnvironment,
@@ -38,8 +44,11 @@ const success = (redirectTo = "/@creator") => ({
 });
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.unstubAllEnvs();
   mocks.isDevelopment.mockReturnValue(true);
   mocks.getCurrentUser.mockResolvedValue(null);
+  mocks.limitRate.mockResolvedValue(undefined);
+  mocks.clientIp.mockReturnValue("203.0.113.10");
   mocks.startAttribution.mockResolvedValue(success());
 });
 
@@ -222,6 +231,20 @@ describe("legitimate share navigation", () => {
       expect(response.headers.get("location")).toBe(`https://ruvora.test${destination}`);
     },
   );
+  it("uses configured APP_URL origin instead of untrusted proxy hosts outside development", async () => {
+    vi.stubEnv("APP_URL", "https://app.ruvora.example");
+    mocks.isDevelopment.mockReturnValue(false);
+    const response = await GET(request(), context());
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("https://app.ruvora.example/@creator");
+  });
+  it("returns 429 with no-store when share redirect IP rate limit is exceeded", async () => {
+    mocks.limitRate.mockRejectedValue(new AppError("RATE_LIMITED", "Too many requests", 429));
+    const response = await GET(request(), context());
+    expect(response.status).toBe(429);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(mocks.startAttribution).not.toHaveBeenCalled();
+  });
 });
 
 describe("localized recovery input boundary", () => {

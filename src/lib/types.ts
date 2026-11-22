@@ -15,6 +15,7 @@ export interface User {
   customLinks: { title: string; url: string }[];
   isDemo: boolean;
   economicHold: boolean;
+  suspended?: boolean;
   emailVerifiedAt?: string | null;
   mfaEnabledAt?: string | null;
   profileModules?: ProfileModule[];
@@ -48,8 +49,9 @@ export interface Activity {
   type: string;
   state: string;
   createdAt: string;
+  validatedAt?: string | null;
   campaign: { name: string };
-  user?: { displayName: string };
+  user?: { displayName: string; handle?: string | null };
   ruleVersionId?: string;
 }
 export interface RuvoraEvent {
@@ -63,7 +65,7 @@ export interface RuvoraEvent {
   };
   configVersion?: string;
   sponsor?: string | null;
-  rules?: string;
+  rules?: string | Record<string, string> | null;
   prizeBudgetMinor?: string;
   fundedMinor?: string;
   fundingState?: string;

@@ -21,6 +21,7 @@ import { assertEventActivityEligible, eventPointsAward } from "./events";
 import { campaignRegionAllowed } from "./campaign-eligibility";
 import { getConversionDecision, hasVerifiedConversion } from "./providers/conversions";
 import { isDevelopment } from "./environment";
+import { consumeApproval } from "./security/approvals";
 const activitySchema = z
   .object({
     campaignId: z.string().min(1).max(100),
@@ -466,7 +467,10 @@ export async function reviewActivity(admin: User, activityId: string, input: unk
 }
 export async function reverseActivity(admin: User, activityId: string, input: unknown) {
   requireRole(admin, "ADMIN");
-  const value = z.object({ reason }).strict().parse(input);
+  const value = z
+    .object({ reason, approvalId: z.string().min(1).max(100).optional() })
+    .strict()
+    .parse(input);
   return atomic(async (tx) => {
     const reviewer = await tx.user.findUniqueOrThrow({ where: { id: admin.id } });
     assert(
@@ -507,6 +511,21 @@ export async function reverseActivity(admin: User, activityId: string, input: un
       "Activity in a finalized distribution requires a separately reviewed recovery operation; historical results remain immutable.",
       409,
     );
+    if (!isDevelopment() || value.approvalId) {
+      assert(
+        value.approvalId,
+        "APPROVAL_REQUIRED",
+        "An independent approval is required for financial reversals outside development.",
+        403,
+      );
+      const currentRules = await activeRules(tx);
+      await consumeApproval(tx, admin.id, value.approvalId, {
+        operation: "FINANCIAL_REVERSAL",
+        targetId: activityId,
+        payload: { activityId },
+        ruleVersion: activity.ruleVersion ?? currentRules.record.version,
+      });
+    }
     if (activity.eventId)
       await assertEventActivityEligible(
         tx,

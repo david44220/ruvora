@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
+import { clientIp, limitRate } from "@/server/auth";
+import { validateRuntimeEnvironment } from "@/server/environment";
 import { receiveWebhook } from "@/server/webhooks";
 import { response } from "@/server/api";
 import { AppError } from "@/server/errors";
@@ -9,7 +11,9 @@ export async function POST(
 ) {
   const id = randomUUID();
   try {
+    validateRuntimeEnvironment();
     const { provider } = await params;
+    await limitRate("webhook-ip", `${provider}:${clientIp(request)}`, 120, 60);
     const reader = request.body?.getReader();
     const chunks: Uint8Array[] = [];
     let size = 0;

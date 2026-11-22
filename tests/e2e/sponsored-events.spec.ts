@@ -220,6 +220,16 @@ test("funded sponsored event uses two real MFA administrators and settles its im
         source: "AVAILABLE",
       });
       await post(sponsor, baseURL, `/campaigns/${campaignId}/submit`, {});
+      const reviewDenied = await operator.request.post(
+        `/api/admin/campaigns/${campaignId}/review`,
+        {
+          headers: { Origin: baseURL },
+          data: { decision: "APPROVE", reason },
+        },
+      );
+      expect(reviewDenied.status()).toBe(403);
+      expect((await reviewDenied.json()).error.code).toBe("FRESH_AUTH_REQUIRED");
+      await stepUp(operator, operatorId, password);
       await post(operator, baseURL, `/admin/campaigns/${campaignId}/review`, {
         decision: "APPROVE",
         reason,
@@ -301,7 +311,7 @@ test("funded sponsored event uses two real MFA administrators and settles its im
         `/admin/events/${event.id}/preview`,
         {},
       );
-      const denied = await operator.request.post(`/api/admin/events/${event.id}/settle`, {
+      const denied = await reviewer.request.post(`/api/admin/events/${event.id}/settle`, {
         headers: { Origin: baseURL },
         data: {
           previewId: preliminary.settlement.id,
@@ -311,7 +321,6 @@ test("funded sponsored event uses two real MFA administrators and settles its im
       });
       expect(denied.status()).toBe(403);
       expect((await denied.json()).error.code).toBe("FRESH_AUTH_REQUIRED");
-      await stepUp(operator, operatorId, password);
       await operator.goto("/admin");
       const card = adminEvent(operator, title);
       await card.locator("textarea").fill(reason);

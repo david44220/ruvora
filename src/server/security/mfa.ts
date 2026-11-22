@@ -236,6 +236,27 @@ export async function requireFreshMfa(user: User, token?: string) {
     };
   });
 }
+export async function requireAdminMfaSession(user: User, token?: string) {
+  requireRole(user, "ADMIN");
+  return atomic(async (tx) => {
+    const session = await liveSession(tx, user, token);
+    requireRole(session.user, "ADMIN");
+    const credential = await tx.mfaCredential.findUnique({ where: { userId: user.id } });
+    assert(
+      credential && !credential.disabledAt && session.user.mfaEnabledAt,
+      "MFA_REQUIRED",
+      "Enroll an authenticator before this action.",
+      403,
+    );
+    assert(
+      Boolean(session.mfaVerifiedAt),
+      "FRESH_AUTH_REQUIRED",
+      "Confirm your password and authenticator code before accessing administration.",
+      403,
+    );
+    return { sessionId: session.id, mfaVerifiedAt: session.mfaVerifiedAt };
+  });
+}
 export async function recoverMfa(user: User, token: string | undefined, input: unknown) {
   const value = z
     .object({ password: z.string().min(12).max(128), recoveryCode: z.string().min(16).max(128) })

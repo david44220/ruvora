@@ -81,7 +81,7 @@ export async function requestEmailVerification(user: User) {
   });
   return { accepted: true, delivery: "queued", development: isDevelopment() };
 }
-export async function requestPasswordReset(input: unknown) {
+export async function requestPasswordReset(input: unknown, ip?: string) {
   const { email } = z
     .object({
       email: z
@@ -91,6 +91,7 @@ export async function requestPasswordReset(input: unknown) {
     })
     .strict()
     .parse(input);
+  if (ip) await limitRate("password-reset-ip", ip, 15, 3600);
   await limitRate("password-reset-request", email, 5, 3600);
   // Configuration failures must have the same response for known and unknown accounts.
   validateEncryptionKey();

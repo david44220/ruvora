@@ -325,6 +325,59 @@ export async function reviewCampaign(admin: User, campaignId: string, input: unk
     return { campaign: updated };
   });
 }
+export async function transitionCampaign(user: User, campaignId: string, input: unknown) {
+  requireRole(user, "ADVERTISER");
+  const value = z
+    .object({ action: z.enum(["PAUSE", "RESUME"]), reason: reason.optional() })
+    .strict()
+    .parse(input);
+  return atomic(async (tx) => {
+    await assertEligible(tx, user.id);
+    const campaign = await tx.campaign.findUnique({ where: { id: campaignId } });
+    assert(
+      campaign && campaign.advertiserId === user.id,
+      "CAMPAIGN_NOT_FOUND",
+      "Campaign not found.",
+      404,
+    );
+    if (value.action === "PAUSE") {
+      assert(
+        campaign.state === "ACTIVE",
+        "INVALID_CAMPAIGN_STATE",
+        "Only active campaigns can be paused.",
+        409,
+      );
+    } else {
+      assert(
+        campaign.state === "PAUSED",
+        "INVALID_CAMPAIGN_STATE",
+        "Only paused campaigns can be resumed.",
+        409,
+      );
+      assert(
+        campaign.endAt > new Date() &&
+          (await balance(tx, `campaign:${campaignId}`)) >= campaign.unitCostMinor,
+        "CAMPAIGN_INELIGIBLE",
+        "The campaign must have remaining budget and a future end date to resume.",
+        409,
+      );
+    }
+    const nextState = value.action === "PAUSE" ? "PAUSED" : "ACTIVE";
+    const updated = await tx.campaign.update({
+      where: { id: campaignId },
+      data: { state: nextState },
+    });
+    await tx.auditLog.create({
+      data: {
+        actorId: user.id,
+        action: value.action === "PAUSE" ? "CAMPAIGN_PAUSED" : "CAMPAIGN_RESUMED",
+        targetId: campaignId,
+        details: { state: nextState, ...(value.reason ? { reason: value.reason } : {}) },
+      },
+    });
+    return { campaign: updated };
+  });
+}
 export async function listCampaigns(
   user?: User | null,
   options: { forCreator?: boolean; objective?: string; category?: string } = {},
@@ -338,63 +391,74 @@ export async function listCampaigns(
     orderBy: { createdAt: "desc" },
     take: 50,
   });
-  return {
-    campaigns: await Promise.all(
-      campaigns
-        .filter((campaign) => {
-          if (campaign.advertiserId === user?.id || user?.roles.includes("ADMIN")) return true;
-          if (
-            user &&
-            (!rule ||
-              !evaluatePersistedPolicy(user, "PARTICIPATION", rule.config).eligible ||
-              !campaignRegionAllowed(user, campaign))
-          )
-            return false;
-          if (options.forCreator && (!user || !canCreatorPromote(user, campaign))) return false;
-          if (options.objective && campaign.objective !== options.objective) return false;
-          if (
-            options.category &&
-            campaign.creatorCategories.length > 0 &&
-            !campaign.creatorCategories.some(
-              (v) => v.toLowerCase() === options.category!.toLowerCase(),
-            )
-          )
-            return false;
-          return true;
-        })
-        .map(async (campaign) => {
-          const remainingMinor = await balance(db, `campaign:${campaign.id}`);
-          const now = new Date();
-          const canParticipate =
-            campaign.state === "ACTIVE" &&
-            campaign.startAt <= now &&
-            campaign.endAt > now &&
-            remainingMinor >= campaign.unitCostMinor &&
-            campaign.advertiserId !== user?.id;
-          if (campaign.advertiserId === user?.id || user?.roles.includes("ADMIN"))
-            return {
-              ...campaign,
-              remainingMinor,
-              canParticipate,
-              validatedCount: await db.activity.count({
-                where: { campaignId: campaign.id, state: "VALIDATED" },
-              }),
-            };
-          return {
-            id: campaign.id,
-            name: campaign.name,
-            description: campaign.description,
-            objective: campaign.objective,
-            destinationUrl: campaign.destinationUrl,
-            state: campaign.state,
-            startAt: campaign.startAt,
-            endAt: campaign.endAt,
-            eventId: campaign.eventId,
-            event: campaign.event,
-            isDemo: campaign.isDemo,
-            canParticipate,
-          };
+  const filtered = campaigns.filter((campaign) => {
+    if (campaign.advertiserId === user?.id || user?.roles.includes("ADMIN")) return true;
+    if (
+      user &&
+      (!rule ||
+        !evaluatePersistedPolicy(user, "PARTICIPATION", rule.config).eligible ||
+        !campaignRegionAllowed(user, campaign))
+    )
+      return false;
+    if (options.forCreator && (!user || !canCreatorPromote(user, campaign))) return false;
+    if (options.objective && campaign.objective !== options.objective) return false;
+    if (
+      options.category &&
+      campaign.creatorCategories.length > 0 &&
+      !campaign.creatorCategories.some((v) => v.toLowerCase() === options.category!.toLowerCase())
+    )
+      return false;
+    return true;
+  });
+  const campaignIds = filtered.map((campaign) => campaign.id);
+  const accountIds = campaignIds.map((id) => `campaign:${id}`);
+  const [balances, validatedCounts] = campaignIds.length
+    ? await Promise.all([
+        db.ledgerEntry.groupBy({
+          by: ["accountId"],
+          where: { accountId: { in: accountIds } },
+          _sum: { amountMinor: true },
         }),
-    ),
+        db.activity.groupBy({
+          by: ["campaignId"],
+          where: { campaignId: { in: campaignIds }, state: "VALIDATED" },
+          _count: true,
+        }),
+      ])
+    : [[], []];
+  const balanceMap = new Map(balances.map((row) => [row.accountId, row._sum.amountMinor ?? 0n]));
+  const countMap = new Map(validatedCounts.map((row) => [row.campaignId, row._count]));
+  const now = new Date();
+  return {
+    campaigns: filtered.map((campaign) => {
+      const remainingMinor = balanceMap.get(`campaign:${campaign.id}`) ?? 0n;
+      const canParticipate =
+        campaign.state === "ACTIVE" &&
+        campaign.startAt <= now &&
+        campaign.endAt > now &&
+        remainingMinor >= campaign.unitCostMinor &&
+        campaign.advertiserId !== user?.id;
+      if (campaign.advertiserId === user?.id || user?.roles.includes("ADMIN"))
+        return {
+          ...campaign,
+          remainingMinor,
+          canParticipate,
+          validatedCount: countMap.get(campaign.id) ?? 0,
+        };
+      return {
+        id: campaign.id,
+        name: campaign.name,
+        description: campaign.description,
+        objective: campaign.objective,
+        destinationUrl: campaign.destinationUrl,
+        state: campaign.state,
+        startAt: campaign.startAt,
+        endAt: campaign.endAt,
+        eventId: campaign.eventId,
+        event: campaign.event,
+        isDemo: campaign.isDemo,
+        canParticipate,
+      };
+    }),
   };
 }
