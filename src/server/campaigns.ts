@@ -27,6 +27,8 @@ const creativeBriefSchema = z
     hashtags: z.array(z.string().trim().min(1).max(40)).max(10).default([]),
     cta: z.string().trim().max(80).default(""),
     formatHint: z.string().trim().max(80).default(""),
+    disclosureNote: z.string().trim().max(160).optional().default(""),
+    suggestedHooks: z.array(z.string().trim().min(1).max(160)).max(4).optional().default([]),
     assetUrls: z.array(safeUrl).max(5).default([]),
   })
   .strict();

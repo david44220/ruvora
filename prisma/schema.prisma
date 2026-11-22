@@ -158,6 +158,7 @@ model User {
   receivedCampaignInvitations  CampaignInvitation[] @relation("InvitationCreator")
   ugcDeliverables              UgcDeliverable[]
   audienceSnapshots            AudienceVerificationSnapshot[]
+  showcaseItems                CreatorShowcaseItem[]
 }
 
 model Session {
@@ -227,6 +228,7 @@ model Campaign {
   promoCodes              PromoCode[]
   invitations             CampaignInvitation[]
   ugcDeliverables         UgcDeliverable[]
+  showcaseItems           CreatorShowcaseItem[]
 
   @@index([state, startAt, endAt])
   @@index([advertiserId, createdAt])
@@ -512,27 +514,29 @@ enum AttributionSource {
 }
 
 model ShareLink {
-  id           String               @id @default(cuid())
-  slug         String               @unique
-  canonicalKey String               @unique
-  ownerId      String
-  creatorId    String?
-  referrerId   String?
-  campaignId   String?
-  eventId      String?
-  source       AttributionSource
-  active       Boolean              @default(true)
-  isDemo       Boolean              @default(false)
-  createdAt    DateTime             @default(now())
-  owner        User                 @relation("ShareOwner", fields: [ownerId], references: [id])
-  creator      User?                @relation("ShareCreator", fields: [creatorId], references: [id], onDelete: Restrict)
-  referrer     User?                @relation("ShareReferrer", fields: [referrerId], references: [id], onDelete: Restrict)
-  campaign     Campaign?            @relation(fields: [campaignId], references: [id], onDelete: Restrict)
-  event        Event?               @relation(fields: [eventId], references: [id], onDelete: Restrict)
-  contexts     AttributionContext[]
-  growthEvents GrowthEvent[]
+  id            String               @id @default(cuid())
+  slug          String               @unique
+  canonicalKey  String               @unique
+  ownerId       String
+  creatorId     String?
+  referrerId    String?
+  campaignId    String?
+  eventId       String?
+  source        AttributionSource
+  socialChannel String               @default("DIRECT")
+  active        Boolean              @default(true)
+  isDemo        Boolean              @default(false)
+  createdAt     DateTime             @default(now())
+  owner         User                 @relation("ShareOwner", fields: [ownerId], references: [id])
+  creator       User?                @relation("ShareCreator", fields: [creatorId], references: [id], onDelete: Restrict)
+  referrer      User?                @relation("ShareReferrer", fields: [referrerId], references: [id], onDelete: Restrict)
+  campaign      Campaign?            @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+  event         Event?               @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  contexts      AttributionContext[]
+  growthEvents  GrowthEvent[]
 
   @@index([creatorId, source])
+  @@index([creatorId, socialChannel])
 }
 
 model AttributionContext {
@@ -546,6 +550,7 @@ model AttributionContext {
   campaignId     String?
   eventId        String?
   source         AttributionSource
+  socialChannel  String            @default("DIRECT")
   ruleVersion    String
   policySnapshot Json
   status         String            @default("ACTIVE")
@@ -567,6 +572,7 @@ model AttributionContext {
 
   @@index([visitorHash, expiresAt])
   @@index([creatorId, firstTouchAt])
+  @@index([creatorId, socialChannel])
   @@index([boundUserId, expiresAt])
   @@index([expiresAt])
 }
@@ -575,6 +581,7 @@ model GrowthEvent {
   id            String              @id @default(cuid())
   dedupeKey     String              @unique
   type          String
+  socialChannel String              @default("DIRECT")
   attributionId String?
   shareLinkId   String?
   creatorId     String?
@@ -591,6 +598,7 @@ model GrowthEvent {
   event         Event?              @relation(fields: [eventId], references: [id], onDelete: Restrict)
 
   @@index([creatorId, type, occurredAt])
+  @@index([creatorId, socialChannel, type])
   @@index([type, occurredAt])
   @@index([campaignId, type])
   @@index([eventId, type])
@@ -1019,4 +1027,21 @@ model AudienceVerificationSnapshot {
   user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, verifiedAt])
+}
+
+model CreatorShowcaseItem {
+  id             String   @id @default(cuid())
+  creatorId      String
+  campaignId     String
+  collectionName String   @default("Picks")
+  creatorNote    String   @default("")
+  sortOrder      Int      @default(0)
+  pinned         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  creator        User     @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  campaign       Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([creatorId, campaignId])
+  @@index([creatorId, pinned, sortOrder])
 }

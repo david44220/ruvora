@@ -139,8 +139,20 @@ export function CampaignForm({
       .filter(Boolean);
     const cta = String(f.get("briefCta") || "").trim();
     const formatHint = String(f.get("briefFormat") || "").trim();
+    const disclosureNote = String(f.get("briefDisclosure") || "").trim();
+    const suggestedHooks = String(f.get("briefHooks") || "")
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(0, 4);
     const hasBrief = Boolean(
-      headline || talkingPoints.length || hashtags.length || cta || formatHint,
+      headline ||
+      talkingPoints.length ||
+      hashtags.length ||
+      cta ||
+      formatHint ||
+      disclosureNote ||
+      suggestedHooks.length,
     );
 
     const abVariants: { id: string; label: string; destinationUrl: string; weight: number }[] = [];
@@ -173,6 +185,8 @@ export function CampaignForm({
                   hashtags,
                   cta,
                   formatHint,
+                  disclosureNote,
+                  suggestedHooks,
                   assetUrls: [],
                 },
               }
@@ -407,6 +421,18 @@ export function CampaignForm({
             <label className="field full-width">
               {t("p4BriefFormat")}
               <input name="briefFormat" maxLength={80} placeholder="Reel 20s / Story / Short" />
+            </label>
+            <label className="field full-width">
+              {t("p6AdvDisclosureLabel")}
+              <input
+                name="briefDisclosure"
+                maxLength={160}
+                placeholder="#collaboration #lienpartenaire"
+              />
+            </label>
+            <label className="field full-width">
+              {t("p6AdvHooksLabel")}
+              <textarea name="briefHooks" rows={3} />
             </label>
           </div>
         </details>

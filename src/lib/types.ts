@@ -6,6 +6,8 @@ export interface CreativeBrief {
   hashtags?: string[];
   cta?: string;
   formatHint?: string;
+  disclosureNote?: string;
+  suggestedHooks?: string[];
   assetUrls?: string[];
 }
 export interface AbVariant {

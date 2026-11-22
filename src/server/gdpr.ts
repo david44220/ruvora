@@ -33,6 +33,7 @@ export async function exportUserGdprData(user: User) {
     deliverables,
     passkeys,
     audienceSnapshots,
+    showcaseItems,
   ] = await Promise.all([
     db.user.findUniqueOrThrow({
       where: { id: user.id },
@@ -152,6 +153,17 @@ export async function exportUserGdprData(user: User) {
       where: { userId: user.id },
       orderBy: { verifiedAt: "desc" },
     }),
+    db.creatorShowcaseItem.findMany({
+      where: { creatorId: user.id },
+      select: {
+        id: true,
+        campaignId: true,
+        collectionName: true,
+        creatorNote: true,
+        pinned: true,
+        createdAt: true,
+      },
+    }),
   ]);
 
   return jsonValue({
@@ -178,6 +190,7 @@ export async function exportUserGdprData(user: User) {
     deliverables,
     passkeys,
     audienceSnapshots,
+    showcaseItems,
   });
 }
 
@@ -243,6 +256,7 @@ export async function anonymizeUserAccount(
     await tx.session.deleteMany({ where: { userId: user.id } });
     await tx.passkeyCredential.deleteMany({ where: { userId: user.id } });
     await tx.passkeyChallenge.deleteMany({ where: { userId: user.id } });
+    await tx.creatorShowcaseItem.deleteMany({ where: { creatorId: user.id } });
     await tx.shareLink.updateMany({ where: { ownerId: user.id }, data: { active: false } });
     await tx.promoCode.updateMany({ where: { creatorId: user.id }, data: { active: false } });
     await tx.advertiserIntegration.deleteMany({ where: { advertiserId: user.id } });

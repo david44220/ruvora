@@ -55,3 +55,13 @@ Metadata/dimensions were checked after encoding. Local image-view tools encounte
 No new AI artwork was generated. `public/assets/share/ruvora-orb-card.png` is a 600×600 PNG delivery derivative of the same canonical orb, created for Next ImageResponse compatibility. `/share-card/profile/[handle]`, `/share-card/event/[slug]` and `/share-card/milestone/[handle]` render 1200×630 cards using bounded escaped public text and EN/FR dictionaries. Milestone cards require actual XP of at least 100. Draft/private/unavailable records produce 404. Cards preserve the canonical warm-metal/amber/obsidian family and carry a development label for demo records.
 
 The derivative has no new model provenance; format conversion is not generation. Reproduction is included in `scripts/optimize-assets.mjs`. Browser QA and exact screenshots are referenced by RELEASE_REPORT.md.
+
+## Pass 06 multi-format social promotion cards
+
+No new AI artwork was generated. `/share-card/[kind]/[slug]` reuses the exact canonical `public/assets/share/ruvora-orb-card.png` derivative alongside local zero-dependency ISO/IEC 18004 vector QR codes (`src/lib/qr.ts`) to render downloadable PNG social cards across three native aspect ratios:
+
+- `?format=story` (`1080×1920`, 9:16 Instagram Story / Reels / TikTok / Snapchat)
+- `?format=square` (`1080×1080`, 1:1 Feed Post)
+- `?format=banner` (`1200×630`, default Open Graph / X / LinkedIn)
+
+Supported kinds include `profile`, `milestone`, `event`, `promo` (campaign + personal promo code + partner disclosure + QR to `/go/[slug]`), and `referral` (direct referral invitation + honest disclaimer + QR to `/go/[slug]`). Passing `?download=1` adds `Content-Disposition: attachment`.

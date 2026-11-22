@@ -55,6 +55,27 @@ export const QUEST_DEFINITIONS: readonly QuestDefinition[] = [
     descriptionKey: "p4QuestCommunityBuilderDesc",
     href: "/app/events",
   },
+  {
+    code: "FIRST_SOCIAL_SHARE",
+    xpAwarded: 60,
+    titleKey: "p6QuestSocialShareTitle",
+    descriptionKey: "p6QuestSocialShareDesc",
+    href: "/app/promote",
+  },
+  {
+    code: "MULTI_CHANNEL_PROMOTER",
+    xpAwarded: 110,
+    titleKey: "p6QuestMultiChannelTitle",
+    descriptionKey: "p6QuestMultiChannelDesc",
+    href: "/app/promote",
+  },
+  {
+    code: "FIRST_REFERRAL_INVITE",
+    xpAwarded: 130,
+    titleKey: "p6QuestFirstReferralTitle",
+    descriptionKey: "p6QuestFirstReferralDesc",
+    href: "/app/referrals",
+  },
 ] as const;
 
 export interface QuestFacts {
@@ -68,6 +89,8 @@ export interface QuestFacts {
   validatedActivities: number;
   eventMemberships: number;
   referralsSent: number;
+  socialShareChannels?: number;
+  showcasePinnedCount?: number;
 }
 
 export function evaluateQuestCompletion(code: string, facts: QuestFacts): boolean {
@@ -86,19 +109,48 @@ export function evaluateQuestCompletion(code: string, facts: QuestFacts): boolea
       return (
         facts.eventMemberships >= 1 || facts.referralsSent >= 1 || facts.validatedActivities >= 3
       );
+    case "FIRST_SOCIAL_SHARE":
+      return (facts.socialShareChannels ?? 0) >= 1;
+    case "MULTI_CHANNEL_PROMOTER":
+      return (facts.socialShareChannels ?? 0) >= 2 || (facts.showcasePinnedCount ?? 0) >= 1;
+    case "FIRST_REFERRAL_INVITE":
+      return facts.referralsSent >= 1;
     default:
       return false;
   }
 }
 
 async function gatherQuestFacts(client: PrismaClient | Tx, userId: string): Promise<QuestFacts> {
-  const [fresh, validatedActivities, eventMemberships, referralsSent] = await Promise.all([
+  const [
+    fresh,
+    validatedActivities,
+    eventMemberships,
+    referralsSent,
+    socialLinksShared,
+    kitShareEvents,
+    showcasePinnedCount,
+  ] = await Promise.all([
     client.user.findUniqueOrThrow({ where: { id: userId } }),
     client.activity.count({ where: { userId, state: "VALIDATED" } }),
     client.eventMembership.count({ where: { userId } }),
     client.referral.count({ where: { inviterId: userId } }),
+    client.shareLink.findMany({
+      where: { ownerId: userId, active: true, socialChannel: { not: "DIRECT" } },
+      select: { socialChannel: true },
+      distinct: ["socialChannel"],
+    }),
+    client.growthEvent.findMany({
+      where: { userId, type: "SOCIAL_KIT_SHARED" },
+      select: { socialChannel: true },
+      distinct: ["socialChannel"],
+    }),
+    client.creatorShowcaseItem.count({ where: { creatorId: userId, pinned: true } }),
   ]);
   const socials = Array.isArray(fresh.socialLinks) ? fresh.socialLinks : [];
+  const distinctChannels = new Set([
+    ...socialLinksShared.map((r) => r.socialChannel),
+    ...kitShareEvents.map((r) => r.socialChannel),
+  ]);
   return {
     onboarded: fresh.onboarded,
     hasHandle: Boolean(fresh.handle),
@@ -110,6 +162,8 @@ async function gatherQuestFacts(client: PrismaClient | Tx, userId: string): Prom
     validatedActivities,
     eventMemberships,
     referralsSent,
+    socialShareChannels: distinctChannels.size,
+    showcasePinnedCount,
   };
 }
 

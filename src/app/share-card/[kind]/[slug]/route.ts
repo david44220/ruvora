@@ -19,5 +19,10 @@ export async function GET(
     throw error;
   }
   const { kind, slug } = await params;
-  return renderShareCard(kind, slug, request.nextUrl.searchParams.get("lang"));
+  const sp = request.nextUrl.searchParams;
+  return renderShareCard(kind, slug, sp.get("lang"), {
+    format: sp.get("format"),
+    campaignId: sp.get("campaign"),
+    download: sp.get("download") === "1",
+  });
 }
