@@ -45,6 +45,7 @@ const success = (redirectTo = "/@creator") => ({
 beforeEach(() => {
   vi.resetAllMocks();
   vi.unstubAllEnvs();
+  vi.stubEnv("APP_URL", "https://ruvora.test");
   mocks.isDevelopment.mockReturnValue(true);
   mocks.getCurrentUser.mockResolvedValue(null);
   mocks.limitRate.mockResolvedValue(undefined);
