@@ -29,7 +29,15 @@ interface Approval {
   state: string;
   expiresAt: string;
 }
-function AdminEvent({ event, reload }: { event: ManagedEvent; reload: () => Promise<void> }) {
+function AdminEvent({
+  event,
+  approvals,
+  reload,
+}: {
+  event: ManagedEvent;
+  approvals: Approval[];
+  reload: () => Promise<void>;
+}) {
   const { t, locale } = useLocale();
   const action = useAction();
   const [reason, setReason] = useState("");
@@ -37,6 +45,12 @@ function AdminEvent({ event, reload }: { event: ManagedEvent; reload: () => Prom
   const [approvalId, setApprovalId] = useState("");
   const [userId, setUserId] = useState("");
   const key = useRef<string | null>(null);
+  const matchingApprovals = approvals.filter(
+    (item) =>
+      item.operation === "EVENT_SETTLEMENT" &&
+      item.targetId === event.id &&
+      item.state === "APPROVED",
+  );
   async function review(decision: string) {
     const result = await action.run(
       () => api(`/admin/events/${event.id}/review`, { decision, reason }),
@@ -165,6 +179,19 @@ function AdminEvent({ event, reload }: { event: ManagedEvent; reload: () => Prom
           >
             {t("p2RequestApproval")}
           </button>
+          {matchingApprovals.length > 0 && (
+            <label className="field">
+              {t("p2SelectApproval")}
+              <select value={approvalId} onChange={(e) => setApprovalId(e.target.value)}>
+                <option value="">{t("p2ManualApprovalOption")}</option>
+                {matchingApprovals.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.id.slice(0, 12)} · {item.reason.slice(0, 40)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <label className="field">
             {t("p2ApprovalId")}
             <input value={approvalId} onChange={(e) => setApprovalId(e.target.value)} />
@@ -302,7 +329,12 @@ export function Pass02Admin() {
         ) : events.data?.events.length ? (
           <div className="metric-card-list">
             {events.data.events.map((event) => (
-              <AdminEvent key={event.id} event={event} reload={events.reload} />
+              <AdminEvent
+                key={event.id}
+                event={event}
+                approvals={approvals.data?.approvals ?? []}
+                reload={events.reload}
+              />
             ))}
           </div>
         ) : (
@@ -313,7 +345,7 @@ export function Pass02Admin() {
         <div className="panel-header">
           <h2>{t("p2Approvals")}</h2>
           <button className="button button-small button-secondary" onClick={approvals.reload}>
-            {t("retry")}
+            {t("p2Refresh")}
           </button>
         </div>
         <p className="section-copy">{t("p2ApprovalIntro")}</p>

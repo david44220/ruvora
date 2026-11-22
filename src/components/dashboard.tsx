@@ -47,6 +47,13 @@ import { CreatorAnalytics, ReferralsScreen } from "./growth";
 import { EventStudio } from "./event-studio";
 import { SecurityScreen } from "./security";
 import { ProfileModulesEditor } from "./profile-modules";
+import { NotificationsBell } from "./notifications-bell";
+import {
+  AudienceVerificationCard,
+  CreatorPromoCodesPanel,
+  ReliabilityAndQuests,
+  WalletCyclePanel,
+} from "./pass04-creator";
 export function AppShell({
   children,
   user,
@@ -133,6 +140,10 @@ export function AppShell({
             </button>
             <span>{t(current)}</span>
             <div className="topbar-actions">
+              <NotificationsBell
+                initialUnread={resource.data?.unreadNotifications ?? 0}
+                onChanged={() => void resource.reload()}
+              />
               {user.handle && (
                 <Link href={`/@${user.handle}`}>
                   {t("openProfile")}
@@ -171,7 +182,7 @@ export function AppShell({
   );
 }
 import { PageTitle, Stats, Stat, ActivityTable, EventCard } from "./workspace-ui";
-function OverviewScreen({ data }: { data: Dashboard }) {
+function OverviewScreen({ data, reload }: { data: Dashboard; reload: () => Promise<void> }) {
   const { t } = useLocale();
   return (
     <>
@@ -211,6 +222,7 @@ function OverviewScreen({ data }: { data: Dashboard }) {
           </Link>
         </div>
       </div>
+      <ReliabilityAndQuests data={data} reload={reload} />
       <section className="panel">
         <div className="panel-header">
           <h3>{t("recentActivity")}</h3>
@@ -237,11 +249,12 @@ function OverviewScreen({ data }: { data: Dashboard }) {
     </>
   );
 }
-function CreatorScreen({ data }: { data: Dashboard }) {
+function CreatorScreen({ data, reload }: { data: Dashboard; reload: () => Promise<void> }) {
   const { t, locale } = useLocale();
   const creatorRU = data.rewardUnits
     .filter((r) => r.state === "VALIDATED" && r.category === "CREATOR")
     .reduce((sum, r) => sum + BigInt(r._sum.amountMicros || 0), 0n);
+  const audienceVerified = data.user.audienceStatus === "VERIFIED";
   return (
     <>
       <PageTitle title={t("creatorStudio")} description={t("creatorIntro")}>
@@ -253,7 +266,7 @@ function CreatorScreen({ data }: { data: Dashboard }) {
         <Stat
           label={t("audience")}
           value={data.user.followers.toLocaleString(locale)}
-          hint={t("selfDeclared")}
+          hint={t(audienceVerified ? "p4AudienceVerifiedBadge" : "selfDeclared")}
           icon={<Users />}
         />
         <Stat
@@ -270,6 +283,8 @@ function CreatorScreen({ data }: { data: Dashboard }) {
           icon={<CircleDollarSign />}
         />
       </div>
+      <AudienceVerificationCard data={data} reload={reload} />
+      <CreatorPromoCodesPanel handle={data.user.handle} />
       <CreatorAnalytics />
       <div className="profile-studio-card">
         <div>
@@ -324,6 +339,7 @@ function WalletScreen({ data }: { data: Dashboard }) {
       <PageTitle title={t("rewards")} description={t("walletIntro")} />
       <Stats data={data} />
       <p className="panel-description">{t("walletNote")}</p>
+      <WalletCyclePanel data={data} />
       <div className="panel">
         <div className="panel-header">
           <h3>{t("ledger")}</h3>
@@ -389,7 +405,7 @@ function WalletScreen({ data }: { data: Dashboard }) {
               <tbody>
                 {data.rewardUnits.map((ru, i) => (
                   <tr key={`${ru.category}-${ru.state}-${i}`}>
-                    <td>{t(`role${ru.category}` as MessageKey) || ru.category}</td>
+                    <td>{t(`cat${ru.category}` as MessageKey) || ru.category}</td>
                     <td>
                       <Status value={ru.state} />
                     </td>
@@ -444,7 +460,7 @@ export function DashboardScreen({
   if (screen === "event-studio") return <EventStudio />;
   if (screen === "security") return <SecurityScreen />;
   if (screen === "referrals") return <ReferralsScreen />;
-  if (screen === "creator") return <CreatorScreen data={data} />;
+  if (screen === "creator") return <CreatorScreen data={data} reload={reload} />;
   if (screen === "advertiser") return <AdvertiserScreen data={data} reload={reload} />;
   if (screen === "opportunities")
     return <OpportunitiesScreen preferredCampaignId={preferredCampaignId} />;
@@ -469,5 +485,5 @@ export function DashboardScreen({
         </div>
       </>
     );
-  return <OverviewScreen data={data} />;
+  return <OverviewScreen data={data} reload={reload} />;
 }

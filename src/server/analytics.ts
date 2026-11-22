@@ -185,7 +185,14 @@ export async function getAdvertiserAnalytics(user: User) {
   const [campaigns, units] = await Promise.all([
     db.campaign.findMany({
       where: { advertiserId: user.id },
-      include: { activities: { include: { creator: { select: { displayName: true } } } } },
+      include: {
+        activities: {
+          include: {
+            creator: { select: { displayName: true, socialLinks: true } },
+            user: { select: { country: true } },
+          },
+        },
+      },
     }),
     db.rewardUnit.findMany({
       where: { userId: user.id, category: "ADVERTISER" },
@@ -197,11 +204,30 @@ export async function getAdvertiserAnalytics(user: User) {
     reversed = activities.filter((item) => item.state === "REVERSED");
   const netSpendMinor = valid.reduce((sum, item) => sum + item.billableMinor, 0n),
     reversedSpendMinor = reversed.reduce((sum, item) => sum + item.billableMinor, 0n);
+  const conversions = valid.filter((item) => item.type === "CONVERSION").length;
+  const ecpcMinor = valid.length > 0 ? netSpendMinor / BigInt(valid.length) : 0n;
+  const cpaMinor = conversions > 0 ? netSpendMinor / BigInt(conversions) : null;
   const creators = new Map<
     string,
     { creatorId: string; displayName: string; validatedActions: number; spendMinor: bigint }
   >();
-  for (const activity of valid)
+  const dailyMap = new Map<
+    string,
+    { date: string; validatedActions: number; spendMinor: bigint }
+  >();
+  const countryMap = new Map<
+    string,
+    { country: string; validatedActions: number; spendMinor: bigint }
+  >();
+  const platformMap = new Map<
+    string,
+    { platform: string; validatedActions: number; spendMinor: bigint }
+  >();
+  const variantMap = new Map<
+    string,
+    { variantId: string; validatedActions: number; spendMinor: bigint }
+  >();
+  for (const activity of valid) {
     if (activity.creatorId && activity.creator) {
       const row = creators.get(activity.creatorId) ?? {
         creatorId: activity.creatorId,
@@ -212,7 +238,46 @@ export async function getAdvertiserAnalytics(user: User) {
       row.validatedActions++;
       row.spendMinor += activity.billableMinor;
       creators.set(activity.creatorId, row);
+
+      const links = Array.isArray(activity.creator.socialLinks)
+        ? (activity.creator.socialLinks as { platform?: string }[])
+        : [];
+      const primaryPlatform =
+        typeof links[0]?.platform === "string" && links[0].platform.trim()
+          ? links[0].platform.trim()
+          : "Direct";
+      const pRow = platformMap.get(primaryPlatform) ?? {
+        platform: primaryPlatform,
+        validatedActions: 0,
+        spendMinor: 0n,
+      };
+      pRow.validatedActions++;
+      pRow.spendMinor += activity.billableMinor;
+      platformMap.set(primaryPlatform, pRow);
     }
+    const dayKey = (activity.validatedAt ?? activity.createdAt).toISOString().slice(0, 10);
+    const dRow = dailyMap.get(dayKey) ?? { date: dayKey, validatedActions: 0, spendMinor: 0n };
+    dRow.validatedActions++;
+    dRow.spendMinor += activity.billableMinor;
+    dailyMap.set(dayKey, dRow);
+
+    const country = activity.user?.country ?? "XX";
+    const cRow = countryMap.get(country) ?? { country, validatedActions: 0, spendMinor: 0n };
+    cRow.validatedActions++;
+    cRow.spendMinor += activity.billableMinor;
+    countryMap.set(country, cRow);
+
+    if (activity.abVariantId) {
+      const vRow = variantMap.get(activity.abVariantId) ?? {
+        variantId: activity.abVariantId,
+        validatedActions: 0,
+        spendMinor: 0n,
+      };
+      vRow.validatedActions++;
+      vRow.spendMinor += activity.billableMinor;
+      variantMap.set(activity.abVariantId, vRow);
+    }
+  }
   return {
     isDemo: user.isDemo || campaigns.some((item) => item.isDemo),
     summary: {
@@ -221,15 +286,22 @@ export async function getAdvertiserAnalytics(user: User) {
       rejectedActions: activities.filter((item) => ["REJECTED", "REVERSED"].includes(item.state))
         .length,
       pendingActivities: activities.filter((item) => item.state === "PENDING_VALIDATION").length,
-      conversions: valid.filter((item) => item.type === "CONVERSION").length,
+      conversions,
       grossSpendMinor: netSpendMinor + reversedSpendMinor,
       reversedSpendMinor,
       netSpendMinor,
+      ecpcMinor,
+      cpaMinor,
       advertiserRuMicros: unitTotal(units),
     },
+    daily: [...dailyMap.values()].sort((a, b) => a.date.localeCompare(b.date)),
+    byCountry: [...countryMap.values()].sort((a, b) => b.validatedActions - a.validatedActions),
+    byPlatform: [...platformMap.values()].sort((a, b) => b.validatedActions - a.validatedActions),
+    byVariant: [...variantMap.values()].sort((a, b) => b.validatedActions - a.validatedActions),
     campaigns: campaigns.map((campaign) => ({
       id: campaign.id,
       name: campaign.name,
+      deliveryMode: campaign.deliveryMode,
       validatedActions: campaign.activities.filter((item) => item.state === "VALIDATED").length,
       rejectedActions: campaign.activities.filter((item) =>
         ["REJECTED", "REVERSED"].includes(item.state),

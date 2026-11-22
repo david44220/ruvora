@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import {
   test,
   expect,
@@ -8,6 +8,7 @@ import {
   type APIRequestContext,
 } from "@playwright/test";
 import { en } from "../../src/i18n/messages";
+import { totpCode, encodeBase32, decodeBase32 } from "../../src/server/security/totp";
 
 type Summary = {
   creatorRuMicros: string;
@@ -23,6 +24,24 @@ async function post(api: APIRequestContext, origin: string, path: string, data: 
   const response = await api.post(`/api${path}`, { headers: { Origin: origin }, data });
   expect(response.status(), `POST ${path}`).toBeLessThan(300);
   return response.json();
+}
+async function stepUpApi(page: Page, origin: string, userId: string, password: string) {
+  const secret = encodeBase32(
+    createHmac("sha256", decodeBase32(process.env.DEMO_TOTP_SECRET!))
+      .update("ruvora-admin:" + userId)
+      .digest()
+      .subarray(0, 20),
+  );
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const response = await page.request.post("/api/security/mfa/step-up", {
+      headers: { Origin: origin },
+      data: { password, code: totpCode(secret) },
+    });
+    if (response.ok()) return;
+    expect((await response.json()).error.code).toBe("INVALID_MFA_CODE");
+    await page.waitForTimeout(30000 - (Date.now() % 30000) + 100);
+  }
+  throw new Error("Unable to complete admin MFA step-up.");
 }
 async function signup(page: Page, key: string, role: "USER" | "CREATOR", navigate = true) {
   if (navigate) await page.goto("/register");
@@ -61,9 +80,9 @@ test("creator profile acquires an account and earns only after independent billa
   test.setTimeout(180000);
   const origin = testInfo.project.use.baseURL as string;
   const password = process.env.DEMO_PASSWORD;
-  if (!password || password.length < 12)
+  if (!password || password.length < 12 || !process.env.DEMO_TOTP_SECRET)
     throw new Error(
-      "Seed local demo accounts with an explicit DEMO_PASSWORD before browser verification.",
+      "Seed local demo accounts with explicit DEMO_PASSWORD and DEMO_TOTP_SECRET before browser verification.",
     );
   const tag = randomUUID().replaceAll("-", "").slice(0, 9);
   const contexts: BrowserContext[] = [];
@@ -89,7 +108,11 @@ test("creator profile acquires an account and earns only after independent billa
       email: "studio@ruvora.test",
       password,
     });
-    await post(adminPage.request, origin, "/auth/login", { email: "admin@ruvora.test", password });
+    const adminLogin = (await post(adminPage.request, origin, "/auth/login", {
+      email: "admin@ruvora.test",
+      password,
+    })) as { user: { id: string } };
+    await stepUpApi(adminPage, origin, adminLogin.user.id, password);
     const name = `Creator attribution campaign ${tag}`;
     const created = await post(advertiserPage.request, origin, "/campaigns", {
       name,

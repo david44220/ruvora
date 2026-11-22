@@ -80,4 +80,13 @@ describe("outbox worker startup and safe output", () => {
     expect(jobs.webhooks).toHaveBeenCalledOnce();
     expect(jobs.expire).toHaveBeenCalledOnce();
   });
+  it("reports pruned rate-limit buckets when cleanup job is enabled", async () => {
+    const jobs = {
+      ...operations(),
+      pruneRateLimits: vi.fn().mockResolvedValue({ count: 7 }),
+    };
+    const summary = await processOutboxes(jobs);
+    expect(summary).toMatchObject({ expiredApprovals: 0, prunedRateLimits: 7 });
+    expect(jobs.pruneRateLimits).toHaveBeenCalledOnce();
+  });
 });

@@ -45,6 +45,12 @@ export function ProfileForm({ user, onSaved }: { user: User; onSaved?: (user: Us
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const fields = new FormData(event.currentTarget);
+    const rawLangs = String(fields.get("preferredLanguages") || "")
+      .split(",")
+      .map((l) => l.trim().toLowerCase())
+      .filter((l): l is "fr" | "en" | "es" | "de" | "it" | "pt" =>
+        ["fr", "en", "es", "de", "it", "pt"].includes(l),
+      );
     const result = await action.run(
       () =>
         api<{ user: User }>("/profile", {
@@ -53,6 +59,10 @@ export function ProfileForm({ user, onSaved }: { user: User; onSaved?: (user: Us
           bio: String(fields.get("bio")).trim(),
           category: String(fields.get("category")).trim(),
           country: String(fields.get("country")).trim().toUpperCase(),
+          city: String(fields.get("city") || "").trim(),
+          preferredLanguages: rawLangs.length ? rawLangs : ["fr", "en"],
+          profileTheme: String(fields.get("profileTheme") || "obsidian"),
+          autoMonetize: fields.get("autoMonetize") === "on",
           locale,
           ageEligible: fields.get("adult") === "on",
           termsAccepted: fields.get("terms") === "on",
@@ -124,6 +134,38 @@ export function ProfileForm({ user, onSaved }: { user: User; onSaved?: (user: Us
             autoComplete="country"
           />
         </label>
+        <label className="field">
+          {t("p4CityLabel")}
+          <input name="city" defaultValue={user.city || ""} maxLength={60} placeholder="Paris" />
+        </label>
+        <label className="field">
+          {t("p4LanguagesLabel")}
+          <input
+            name="preferredLanguages"
+            defaultValue={(user.preferredLanguages ?? ["fr", "en"]).join(", ")}
+            maxLength={40}
+          />
+        </label>
+        <label className="field">
+          {t("p4ProfileThemeLabel")}
+          <select name="profileTheme" defaultValue={user.profileTheme || "obsidian"}>
+            <option value="obsidian">{t("p4ThemeObsidian")}</option>
+            <option value="champagne">{t("p4ThemeChampagne")}</option>
+            <option value="emerald-dusk">{t("p4ThemeEmeraldDusk")}</option>
+            <option value="amber-glow">{t("p4ThemeAmberGlow")}</option>
+          </select>
+        </label>
+        <div className="field" style={{ justifyContent: "center" }}>
+          <label className="checkbox-field">
+            <input
+              name="autoMonetize"
+              type="checkbox"
+              defaultChecked={user.autoMonetize !== false}
+            />
+            {t("p4AutoMonetizeLabel")}
+          </label>
+          <span className="field-hint">{t("p4AutoMonetizeHint")}</span>
+        </div>
       </div>
 
       {socials.map((social, index) => (

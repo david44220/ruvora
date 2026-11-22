@@ -16,7 +16,8 @@ export function LocaleProvider({
   const [locale, updateLocale] = useState(initialLocale);
   function setLocale(value: Locale) {
     updateLocale(value);
-    document.cookie = `ruvora_locale=${value};path=/;max-age=31536000;samesite=lax`;
+    const secure = window.location.protocol === "https:" ? ";secure" : "";
+    document.cookie = `ruvora_locale=${value};path=/;max-age=31536000;samesite=lax${secure}`;
     document.documentElement.lang = value;
   }
   return (

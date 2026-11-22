@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { processMailOutbox } from "../src/server/security/email";
 import { expireApprovals } from "../src/server/security/approvals";
+import { pruneExpiredRateLimits } from "../src/server/auth";
 import { processWebhookInbox } from "../src/server/webhooks";
 import { validateRuntimeEnvironment } from "../src/server/environment";
 import { AppError } from "../src/server/errors";
@@ -11,6 +12,7 @@ type WorkerOperations = {
   mail: () => Promise<{ processed: { id: string; status: string }[] }>;
   webhooks: () => Promise<{ processed: { eventId: string; status: string; errorCode?: string }[] }>;
   expire: () => Promise<{ count: number }>;
+  pruneRateLimits?: () => Promise<{ count: number }>;
 };
 /** Runtime preflight always happens before any queue claim or expiry mutation. */
 export async function processOutboxes(
@@ -18,12 +20,14 @@ export async function processOutboxes(
     mail: processMailOutbox,
     webhooks: processWebhookInbox,
     expire: expireApprovals,
+    pruneRateLimits: pruneExpiredRateLimits,
   },
 ) {
   validateRuntimeEnvironment();
   const mail = await operations.mail();
   const webhooks = await operations.webhooks();
   const approvals = await operations.expire();
+  const pruned = operations.pruneRateLimits ? await operations.pruneRateLimits() : undefined;
   // Explicit projections keep provider payloads, bigint values and mail secrets
   // out of stdout even when a service later adds fields to its return value.
   return {
@@ -40,6 +44,7 @@ export async function processOutboxes(
       })),
     },
     expiredApprovals: approvals.count,
+    ...(pruned !== undefined ? { prunedRateLimits: pruned.count } : {}),
   };
 }
 async function main() {

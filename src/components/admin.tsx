@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { useRef, useState, type FormEvent } from "react";
 import {
   ShieldCheck,
@@ -17,6 +18,7 @@ import { Pass02Admin } from "./admin-pass02";
 interface AdminData {
   campaigns: Campaign[];
   activities: (Activity & { evidence?: string })[];
+  validatedActivities?: (Activity & { evidence?: string })[];
   users: User[];
   distributions: { id: string; state: string; startAt: string; endAt: string }[];
   auditLogs: { id: string; action: string; targetId: string; createdAt: string }[];
@@ -32,6 +34,11 @@ interface AdminData {
     targetOperatingProfitMinor: string;
     isDemo: boolean;
   };
+}
+interface AdminSecurityStatus {
+  mfaEnabled: boolean;
+  currentSessionId: string;
+  sessions: { id: string; mfaVerifiedAt: string | null }[];
 }
 function ReviewCard({
   item,
@@ -68,6 +75,36 @@ function ReviewCard({
       {kind === "activities" && (
         <>
           <p>{activity.user?.displayName}</p>
+          <div
+            className="profile-badge-row"
+            style={{ marginBlock: 8, justifyContent: "flex-start" }}
+          >
+            {(() => {
+              const score = activity.riskScore ?? 0;
+              const level = score >= 60 ? "high" : score >= 25 ? "medium" : "low";
+              const label =
+                level === "high"
+                  ? t("p4RiskHigh")
+                  : level === "medium"
+                    ? t("p4RiskMedium")
+                    : t("p4RiskLow");
+              return (
+                <span className={`tag risk-badge risk-${level}`}>
+                  {t("p4RiskScore")}: {score}/100 · {label}
+                </span>
+              );
+            })()}
+            {activity.providerConversions?.some((c) => c.decision === "VERIFIED") && (
+              <span className="tag tag-verified">{t("p4WebhookVerifiedBadge")}</span>
+            )}
+            {activity.abVariantId && <span className="tag">A/B: {activity.abVariantId}</span>}
+            {activity.promoCodeUsed && <span className="tag">{activity.promoCodeUsed}</span>}
+          </div>
+          {Array.isArray(activity.riskSignals) && activity.riskSignals.length > 0 && (
+            <p className="field-hint" style={{ marginBottom: 8 }}>
+              {activity.riskSignals.join(" · ")}
+            </p>
+          )}
           {activity.evidence && <p className="review-evidence">{activity.evidence}</p>}
         </>
       )}
@@ -110,6 +147,59 @@ function ReviewCard({
     </article>
   );
 }
+function ReversalCard({
+  activity,
+  reload,
+}: {
+  activity: Activity & { evidence?: string };
+  reload: () => Promise<void>;
+}) {
+  const { t, locale } = useLocale();
+  const action = useAction();
+  const [reason, setReason] = useState("");
+  async function reverse() {
+    const result = await action.run(
+      () => api(`/admin/activities/${activity.id}/reverse`, { reason }),
+      t("p2ActivityReversed"),
+    );
+    if (result) {
+      setReason("");
+      await reload();
+    }
+  }
+  return (
+    <article className="review-card">
+      <div className="panel-header">
+        <h4>{activity.campaign.name}</h4>
+        <Status value={activity.state} />
+      </div>
+      <p>
+        {activity.user?.displayName}
+        {activity.user?.handle ? ` (@${activity.user.handle})` : ""} ·{" "}
+        {new Date(activity.validatedAt || activity.createdAt).toLocaleString(locale)}
+      </p>
+      <label className="field">
+        {t("reason")}
+        <input
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          minLength={10}
+          maxLength={500}
+        />
+      </label>
+      <div className="form-actions">
+        <button
+          className="button button-danger button-small"
+          disabled={action.busy || reason.trim().length < 10}
+          onClick={reverse}
+        >
+          {t(action.busy ? "working" : "p2ReverseActivity")}
+        </button>
+      </div>
+      {action.notice && <Notice message={action.notice} error={action.failed} />}
+    </article>
+  );
+}
 function DistributionPanel({ reload }: { reload: () => Promise<void> }) {
   const { t, locale } = useLocale();
   const action = useAction();
@@ -117,9 +207,13 @@ function DistributionPanel({ reload }: { reload: () => Promise<void> }) {
     distribution: { id: string };
     preview: {
       distributedMinor: string;
-      retainedMinor?: string;
-      marginDecision: { retainedMinor?: string; reasons?: string[] };
-      allocations: unknown[];
+      marginDecision: {
+        grossEligibleRevenueMinor?: string;
+        requiredRetainedMinor?: string;
+        status?: string;
+        reasons?: string[];
+      };
+      allocations: { userId: string; category?: string; amountMinor: string }[];
     };
   } | null>(null);
   const key = useRef<string | null>(null);
@@ -153,6 +247,11 @@ function DistributionPanel({ reload }: { reload: () => Promise<void> }) {
       await reload();
     }
   }
+  const eligibleMinor = preview?.preview.marginDecision.grossEligibleRevenueMinor;
+  const retainedMinor =
+    eligibleMinor !== undefined && preview
+      ? (BigInt(eligibleMinor) - BigInt(preview.preview.distributedMinor)).toString()
+      : (preview?.preview.marginDecision.requiredRetainedMinor ?? "0");
   return (
     <section className="panel admin-section">
       <div className="panel-header">
@@ -185,6 +284,53 @@ function DistributionPanel({ reload }: { reload: () => Promise<void> }) {
               {t("pool")} <strong>{minorMoney(preview.preview.distributedMinor, locale)}</strong>
             </p>
           </div>
+          <dl className="dist-summary-grid">
+            {eligibleMinor !== undefined && (
+              <div>
+                <dt>{t("p2EligibleRevenue")}</dt>
+                <dd>{minorMoney(eligibleMinor, locale)}</dd>
+              </div>
+            )}
+            <div>
+              <dt>{t("p2RetainedMargin")}</dt>
+              <dd>{minorMoney(retainedMinor, locale)}</dd>
+            </div>
+            {preview.preview.marginDecision.status && (
+              <div>
+                <dt>{t("p2MarginDecision")}</dt>
+                <dd>{preview.preview.marginDecision.status}</dd>
+              </div>
+            )}
+            <div>
+              <dt>{t("p2AllocationsCount")}</dt>
+              <dd>{preview.preview.allocations.length}</dd>
+            </div>
+          </dl>
+          {preview.preview.allocations.length > 0 && (
+            <div className="table-scroll" style={{ marginBottom: 16 }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>{t("p2ParticipantId")}</th>
+                    <th>{t("type")}</th>
+                    <th>{t("amount")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.preview.allocations.map((row, idx) => (
+                    <tr key={`${row.userId}-${row.category ?? idx}`}>
+                      <td>{row.userId}</td>
+                      <td>
+                        {row.category ? t(`cat${row.category}` as "catUSER") || row.category : "—"}
+                      </td>
+                      <td className="number">{minorMoney(row.amountMinor, locale)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <p className="field-hint">{t("p2RawSnapshot")}</p>
           <pre className="data-json">{JSON.stringify(preview.preview, null, 2)}</pre>
           <button className="button" disabled={action.busy} onClick={finalize}>
             {t("finalizeDistribution")}
@@ -258,18 +404,30 @@ function ConfigurationPanel({
 function HoldControl({ user, reload }: { user: User; reload: () => Promise<void> }) {
   const { t } = useLocale();
   const [reason, setReason] = useState("");
+  const [suspended, setSuspended] = useState(Boolean(user.suspended));
   const action = useAction();
   async function update(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const result = await action.run(
-      () => api(`/admin/users/${user.id}/hold`, { economicHold: !user.economicHold, reason }),
+      () =>
+        api(`/admin/users/${user.id}/hold`, {
+          economicHold: !user.economicHold,
+          suspended,
+          reason,
+        }),
       t("operationComplete"),
     );
-    if (result) await reload();
+    if (result) {
+      setReason("");
+      await reload();
+    }
   }
   return (
     <div className="review-card">
-      <h4>{user.displayName}</h4>
+      <div className="panel-header">
+        <h4>{user.displayName}</h4>
+        {user.suspended && <span className="tag">{t("p2SuspendedBadge")}</span>}
+      </div>
       <p>
         @{user.handle} · {user.roles.join(" / ")}
       </p>
@@ -284,6 +442,14 @@ function HoldControl({ user, reload }: { user: User; reload: () => Promise<void>
             required
           />
         </label>
+        <label className="checkbox-field">
+          <input
+            type="checkbox"
+            checked={suspended}
+            onChange={(e) => setSuspended(e.target.checked)}
+          />
+          {t("p2SuspendAccount")}
+        </label>
         <button className="button button-secondary button-small" disabled={action.busy}>
           {t(user.economicHold ? "releaseHold" : "hold")}
         </button>
@@ -295,12 +461,37 @@ function HoldControl({ user, reload }: { user: User; reload: () => Promise<void>
 export function AdminScreen() {
   const { t, locale } = useLocale();
   const result = useResource<AdminData>("/admin");
+  const sec = useResource<AdminSecurityStatus>("/security");
+  const [auditQuery, setAuditQuery] = useState("");
+  const [renderedAt] = useState(() => Date.now());
   if (result.loading) return <Loading />;
   if (result.error || !result.data) return <Notice error message={t("unavailable")} />;
   const d = result.data;
+  const currentSession = sec.data?.sessions.find((s) => s.id === sec.data?.currentSessionId);
+  const mfaFresh = Boolean(
+    currentSession?.mfaVerifiedAt &&
+    renderedAt - new Date(currentSession.mfaVerifiedAt).getTime() <= 15 * 60_000,
+  );
+  const needle = auditQuery.trim().toLowerCase();
+  const filteredLogs = needle
+    ? d.auditLogs.filter(
+        (log) =>
+          log.action.toLowerCase().includes(needle) || log.targetId.toLowerCase().includes(needle),
+      )
+    : d.auditLogs;
   return (
     <>
       <PageTitle title={t("admin")} description={t("adminIntro")} />
+      {sec.data && (
+        <div className={`panel mfa-status-banner ${mfaFresh ? "mfa-fresh" : "mfa-stale"}`}>
+          <div>
+            <strong>{t(mfaFresh ? "p2MfaStatusFresh" : "p2MfaStatusRequired")}</strong>
+          </div>
+          <Link className="button button-small button-secondary" href="/app/security">
+            {t("p2StepUp")}
+          </Link>
+        </div>
+      )}
       <div className="stats-grid">
         <Stat
           label={t("retained")}
@@ -365,6 +556,21 @@ export function AdminScreen() {
           </div>
         </section>
       </div>
+      {d.validatedActivities && d.validatedActivities.length > 0 && (
+        <section className="panel admin-section">
+          <div className="panel-header">
+            <h3>{t("p2ValidatedActivities")}</h3>
+          </div>
+          <details>
+            <summary>{d.validatedActivities.length}</summary>
+            <div className="admin-grid" style={{ marginTop: 20 }}>
+              {d.validatedActivities.map((item) => (
+                <ReversalCard key={item.id} activity={item} reload={result.reload} />
+              ))}
+            </div>
+          </details>
+        </section>
+      )}
       <DistributionPanel reload={result.reload} />
       <ConfigurationPanel key={d.rules?.id} rules={d.rules} reload={result.reload} />
       <section className="panel admin-section">
@@ -384,6 +590,14 @@ export function AdminScreen() {
         <div className="panel-header">
           <h3>{t("audit")}</h3>
         </div>
+        <label className="field audit-filter">
+          {t("p2AuditFilter")}
+          <input
+            value={auditQuery}
+            onChange={(e) => setAuditQuery(e.target.value)}
+            maxLength={120}
+          />
+        </label>
         <div className="table-scroll">
           <table>
             <thead>
@@ -393,7 +607,7 @@ export function AdminScreen() {
               </tr>
             </thead>
             <tbody>
-              {d.auditLogs.slice(0, 15).map((log) => (
+              {filteredLogs.slice(0, 20).map((log) => (
                 <tr key={log.id}>
                   <td>
                     <strong>{log.action}</strong>

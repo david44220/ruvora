@@ -21,6 +21,9 @@ import { assertEventActivityEligible, eventPointsAward } from "./events";
 import { campaignRegionAllowed } from "./campaign-eligibility";
 import { getConversionDecision, hasVerifiedConversion } from "./providers/conversions";
 import { isDevelopment } from "./environment";
+import { consumeApproval } from "./security/approvals";
+import { computeActivityRisk } from "./risk";
+import { notifyUser } from "./notifications";
 const activitySchema = z
   .object({
     campaignId: z.string().min(1).max(100),
@@ -35,10 +38,21 @@ const activitySchema = z
     idempotencyKey,
     eventId: z.string().max(100).optional(),
     evidence: z.string().trim().min(10).max(1000).optional(),
+    abVariantId: z
+      .string()
+      .trim()
+      .regex(/^[a-zA-Z0-9_-]{1,24}$/)
+      .optional(),
+    promoCode: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9-]{4,24}$/)
+      .optional(),
   })
   .strict();
 export async function submitActivity(user: User, input: unknown, tokens?: AttributionTokens) {
   const value = activitySchema.parse(input);
+  const normalizedPromo = value.promoCode ? value.promoCode.toUpperCase() : undefined;
   const fingerprint = attributionTokenHash(
     JSON.stringify({
       body: value,
@@ -101,6 +115,30 @@ export async function submitActivity(user: User, input: unknown, tokens?: Attrib
       "INVALID_ACTIVITY_TYPE",
       "This activity does not match the campaign objective.",
     );
+    if (value.abVariantId) {
+      const variants = Array.isArray(campaign.abVariants)
+        ? (campaign.abVariants as { id?: string }[])
+        : [];
+      assert(
+        variants.some((v) => v && v.id === value.abVariantId),
+        "VALIDATION_ERROR",
+        "The selected campaign variant does not exist.",
+        400,
+      );
+    }
+    if (normalizedPromo) {
+      const promo = await tx.promoCode.findUnique({ where: { code: normalizedPromo } });
+      assert(
+        promo &&
+          promo.active &&
+          promo.campaignId === campaign.id &&
+          promo.creatorId !== user.id &&
+          promo.creatorId !== campaign.advertiserId,
+        "PROMO_CODE_INVALID",
+        "This promo code is invalid or inactive for this campaign.",
+        400,
+      );
+    }
     assert(
       (await balance(tx, `campaign:${campaign.id}`)) >= campaign.unitCostMinor,
       "INSUFFICIENT_FUNDS",
@@ -151,6 +189,14 @@ export async function submitActivity(user: User, input: unknown, tokens?: Attrib
       tokens,
     );
     const creatorId = attributed?.context.creatorId ?? undefined;
+    const risk = await computeActivityRisk(tx, {
+      userId: user.id,
+      userCreatedAt: freshUser.createdAt,
+      type: value.type,
+      hasEvidence: Boolean(value.evidence),
+      attributionCreatedAt: attributed?.context.firstTouchAt ?? null,
+      isDemoCampaign: campaign.isDemo,
+    });
     const activity = await tx.activity.create({
       data: {
         userId: user.id,
@@ -160,6 +206,10 @@ export async function submitActivity(user: User, input: unknown, tokens?: Attrib
         type: value.type,
         idempotencyKey: key,
         evidence: value.evidence,
+        abVariantId: value.abVariantId ?? null,
+        promoCodeUsed: normalizedPromo ?? null,
+        riskScore: risk.riskScore,
+        riskSignals: jsonValue(risk.signals),
         requestFingerprint: fingerprint,
         ...(attributed
           ? { attributionId: attributed.context.id, attributionSnapshot: attributed.snapshot }
@@ -171,7 +221,12 @@ export async function submitActivity(user: User, input: unknown, tokens?: Attrib
         actorId: user.id,
         action: "ACTIVITY_RECEIVED",
         targetId: activity.id,
-        details: { state: "PENDING_VALIDATION", campaignId: campaign.id },
+        details: {
+          state: "PENDING_VALIDATION",
+          campaignId: campaign.id,
+          riskScore: risk.riskScore,
+          riskSignals: risk.signals,
+        },
       },
     });
     await recordGrowth(tx, {
@@ -262,6 +317,13 @@ export async function reviewActivity(admin: User, activityId: string, input: unk
           details: value,
         },
       });
+      await notifyUser(tx, {
+        userId: activity.userId,
+        kind: "ACTIVITY_REJECTED",
+        titleKey: "p4NotifActivityRejected",
+        bodyParams: { campaign: activity.campaign.name },
+        href: "/app/activity",
+      });
       return { activity: rejected };
     }
     assert(
@@ -334,6 +396,8 @@ export async function reviewActivity(admin: User, activityId: string, input: unk
     const remaining = await balance(tx, `campaign:${activity.campaignId}`);
     const dailyRemaining =
       activity.campaign.dailyBudgetMinor > spent ? activity.campaign.dailyBudgetMinor - spent : 0n;
+    const effectiveRiskScore =
+      value.evidenceVerified && activity.riskScore >= 100 ? 95 : activity.riskScore;
     const decision = validateActivity({
       participantId: activity.userId,
       advertiserId: activity.campaign.advertiserId,
@@ -351,7 +415,7 @@ export async function reviewActivity(admin: User, activityId: string, input: unk
       billableMinor: activity.campaign.unitCostMinor,
       remainingBudgetMinor: remaining,
       dailyRemainingMinor: dailyRemaining,
-      riskScore: 0,
+      riskScore: effectiveRiskScore,
       reviewThreshold: 100,
       conversionEvidenceVerified: conversionVerified,
     });
@@ -436,6 +500,12 @@ export async function reviewActivity(admin: User, activityId: string, input: unk
       activity,
       awards.units.find((unit) => unit.category === "USER")?.amountMicros ?? 0n,
     );
+    if (activity.promoCodeUsed) {
+      await tx.promoCode.updateMany({
+        where: { code: activity.promoCodeUsed, campaignId: activity.campaignId },
+        data: { usesCount: { increment: 1 } },
+      });
+    }
     const updated = await tx.activity.update({
       where: { id: activityId },
       data: {
@@ -458,15 +528,37 @@ export async function reviewActivity(admin: User, activityId: string, input: unk
           referralAward,
           ruleId: record.id,
           attributionId: activity.attributionId,
+          riskScore: activity.riskScore,
         }),
       },
     });
+    await notifyUser(tx, {
+      userId: activity.userId,
+      kind: "ACTIVITY_VALIDATED",
+      titleKey: "p4NotifActivityValidated",
+      bodyParams: { campaign: activity.campaign.name },
+      href: "/app/wallet",
+    });
+    const remainingAfter = remaining - activity.campaign.unitCostMinor;
+    const lowBudgetThreshold = activity.campaign.budgetMinor / 5n;
+    if (remaining > lowBudgetThreshold && remainingAfter <= lowBudgetThreshold) {
+      await notifyUser(tx, {
+        userId: activity.campaign.advertiserId,
+        kind: "CAMPAIGN_LOW_BUDGET",
+        titleKey: "p4NotifCampaignLowBudget",
+        bodyParams: { campaign: activity.campaign.name },
+        href: "/app/advertiser",
+      });
+    }
     return { activity: updated, awards };
   });
 }
 export async function reverseActivity(admin: User, activityId: string, input: unknown) {
   requireRole(admin, "ADMIN");
-  const value = z.object({ reason }).strict().parse(input);
+  const value = z
+    .object({ reason, approvalId: z.string().min(1).max(100).optional() })
+    .strict()
+    .parse(input);
   return atomic(async (tx) => {
     const reviewer = await tx.user.findUniqueOrThrow({ where: { id: admin.id } });
     assert(
@@ -507,6 +599,21 @@ export async function reverseActivity(admin: User, activityId: string, input: un
       "Activity in a finalized distribution requires a separately reviewed recovery operation; historical results remain immutable.",
       409,
     );
+    if (!isDevelopment() || value.approvalId) {
+      assert(
+        value.approvalId,
+        "APPROVAL_REQUIRED",
+        "An independent approval is required for financial reversals outside development.",
+        403,
+      );
+      const currentRules = await activeRules(tx);
+      await consumeApproval(tx, admin.id, value.approvalId, {
+        operation: "FINANCIAL_REVERSAL",
+        targetId: activityId,
+        payload: { activityId },
+        ruleVersion: activity.ruleVersion ?? currentRules.record.version,
+      });
+    }
     if (activity.eventId)
       await assertEventActivityEligible(
         tx,
@@ -566,6 +673,13 @@ export async function reverseActivity(admin: User, activityId: string, input: un
         targetId: activityId,
         details: value,
       },
+    });
+    await notifyUser(tx, {
+      userId: activity.userId,
+      kind: "ACTIVITY_REVERSED",
+      titleKey: "p4NotifActivityReversed",
+      bodyParams: { campaign: activity.campaign.name },
+      href: "/app/activity",
     });
     return { activity: updated };
   });

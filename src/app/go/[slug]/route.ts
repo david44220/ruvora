@@ -1,13 +1,32 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ATTRIBUTION_COOKIE, VISITOR_COOKIE, startAttribution } from "@/server/attribution";
-import { getCurrentUser } from "@/server/auth";
+import { clientIp, getCurrentUser, limitRate } from "@/server/auth";
 import { isDevelopment, validateRuntimeEnvironment } from "@/server/environment";
 import { AppError } from "@/server/errors";
 import { safeReturnTo } from "@/lib/navigation";
 import { isShareRecoveryCode, isShareSlug, type ShareRecoveryCode } from "@/lib/share-recovery";
 
+function redirectBase(request: NextRequest): string {
+  const configured = process.env.APP_URL;
+  if (configured) {
+    try {
+      const canonical = new URL(configured);
+      if (isDevelopment()) {
+        const reqUrl = new URL(request.url);
+        if (reqUrl.hostname === "localhost" || reqUrl.hostname === "127.0.0.1") {
+          return reqUrl.origin;
+        }
+      }
+      return canonical.origin;
+    } catch {
+      // Fall back to request URL only if APP_URL is unparseable in isolated tests.
+    }
+  }
+  return request.url;
+}
+
 function recoverShare(request: NextRequest, code: ShareRecoveryCode, slug: string) {
-  const destination = new URL("/share-unavailable", request.url);
+  const destination = new URL("/share-unavailable", redirectBase(request));
   destination.searchParams.set("code", code);
   const resetContext = code === "ATTRIBUTION_ACCOUNT_MISMATCH";
   if (resetContext && isShareSlug(slug)) destination.searchParams.set("retry", slug);
@@ -27,6 +46,17 @@ function recoverShare(request: NextRequest, code: ShareRecoveryCode, slug: strin
 }
 export async function GET(request: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
   validateRuntimeEnvironment();
+  try {
+    await limitRate("go-ip", clientIp(request), 120, 60);
+  } catch (error) {
+    if (error instanceof AppError && error.code === "RATE_LIMITED") {
+      return new NextResponse("Too many requests.", {
+        status: 429,
+        headers: { "cache-control": "no-store", "retry-after": "60" },
+      });
+    }
+    throw error;
+  }
   const { slug } = await params;
   if (!isShareSlug(slug)) return recoverShare(request, "SHARE_LINK_INVALID", slug);
   const user = await getCurrentUser();
@@ -52,7 +82,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     : started.redirectTo.startsWith("/app/")
       ? "/register"
       : started.redirectTo;
-  const output = NextResponse.redirect(new URL(destination, request.url));
+  const output = NextResponse.redirect(new URL(destination, redirectBase(request)));
   output.headers.set("Cache-Control", "private, no-store");
   for (const [name, value] of [
     [ATTRIBUTION_COOKIE, started.attributionToken],

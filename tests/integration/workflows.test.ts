@@ -12,6 +12,7 @@ import {
   fundCampaign,
   submitCampaign,
   reviewCampaign,
+  transitionCampaign,
   listCampaigns,
 } from "../../src/server/campaigns";
 import { submitActivity, reviewActivity, reverseActivity } from "../../src/server/activities";
@@ -543,5 +544,21 @@ describe("PostgreSQL economic and identity integration", () => {
       }),
     ).rejects.toMatchObject({ code: "DEMO_PRODUCTION_BLOCKED" });
     vi.unstubAllEnvs();
+  });
+  it("allows advertiser campaign pause and resume while blocking participation when paused", async () => {
+    const paused = await transitionCampaign(advertiser, campaign.id, { action: "PAUSE" });
+    expect(paused.campaign.state).toBe("PAUSED");
+    await expect(
+      submitActivity(participant, {
+        campaignId: campaign.id,
+        type: "CLICK",
+        idempotencyKey: `${tag}:while-paused`,
+      }),
+    ).rejects.toMatchObject({ code: "CAMPAIGN_INACTIVE" });
+    await expect(
+      transitionCampaign(participant, campaign.id, { action: "RESUME" }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const resumed = await transitionCampaign(advertiser, campaign.id, { action: "RESUME" });
+    expect(resumed.campaign.state).toBe("ACTIVE");
   });
 });

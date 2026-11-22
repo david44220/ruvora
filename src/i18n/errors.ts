@@ -369,6 +369,42 @@ const errors: Record<string, [string, string]> = {
     "You cannot participate in your own advertising campaign.",
     "Vous ne pouvez pas participer à votre propre campagne publicitaire.",
   ],
+  INVALID_CAMPAIGN_STATE: [
+    "This campaign cannot change to that status from its current state.",
+    "Cette campagne ne peut pas changer vers cet état depuis son statut actuel.",
+  ],
+  FINALIZED_HISTORY: [
+    "Activity included in a finalized distribution is immutable and requires a separately reviewed recovery operation.",
+    "Une activité incluse dans une distribution finalisée est immuable et requiert une opération de récupération distincte.",
+  ],
+  QUEST_NOT_FOUND: [
+    "This progression quest does not exist.",
+    "Cette quête de progression n’existe pas.",
+  ],
+  QUEST_NOT_COMPLETED: [
+    "Complete the quest requirements before claiming its XP.",
+    "Terminez les conditions de la quête avant de réclamer ses XP.",
+  ],
+  PLATFORM_URL_MISMATCH: [
+    "The profile link must match the selected social platform.",
+    "Le lien de profil doit correspondre au réseau social sélectionné.",
+  ],
+  AUDIENCE_CHALLENGE_REQUIRED: [
+    "Generate a bio verification code before confirming ownership.",
+    "Générez d’abord un code de vérification avant de confirmer votre profil.",
+  ],
+  PROMO_CODE_INVALID: [
+    "This promo code is invalid or inactive for this campaign.",
+    "Ce code promo est invalide ou inactif pour cette campagne.",
+  ],
+  USER_NOT_FOUND: [
+    "No active Ruvora account matches this email address.",
+    "Aucun compte Ruvora actif ne correspond à cette adresse e-mail.",
+  ],
+  SELF_INVITE: [
+    "You are already the owner of this workspace.",
+    "Vous êtes déjà propriétaire de cet espace.",
+  ],
 };
 export function errorMessage(code: string, locale: Locale) {
   return (

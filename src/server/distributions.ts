@@ -15,6 +15,8 @@ import { account, balance, postLedger } from "./ledger";
 import { activeRules, rulesSchema } from "./rules";
 import { idempotencyKey } from "./campaigns";
 import { currentEventPrizeExposure } from "./event-settlement";
+import { consumeApproval } from "./security/approvals";
+import { notifyUser } from "./notifications";
 const fingerprint = (payload: string) => createHash("sha256").update(payload).digest("hex");
 async function calculatePreview(
   tx: Tx,
@@ -140,7 +142,11 @@ export async function createDistributionPreview(admin: User, input: unknown) {
 export async function commitDistribution(admin: User, input: unknown) {
   requireRole(admin, "ADMIN");
   const value = z
-    .object({ previewId: z.string().min(1).max(100), idempotencyKey })
+    .object({
+      previewId: z.string().min(1).max(100),
+      idempotencyKey,
+      approvalId: z.string().min(1).max(100).optional(),
+    })
     .strict()
     .parse(input);
   return atomic(async (tx) => {
@@ -186,6 +192,20 @@ export async function commitDistribution(admin: User, input: unknown) {
       "Revenue, eligibility or Reward Units changed. Create a fresh preview.",
       409,
     );
+    if (!isDevelopment() || value.approvalId) {
+      assert(
+        value.approvalId,
+        "APPROVAL_REQUIRED",
+        "An independent approval is required to finalize a distribution outside development.",
+        403,
+      );
+      await consumeApproval(tx, admin.id, value.approvalId, {
+        operation: "DISTRIBUTION_FINALIZE",
+        targetId: distribution.id,
+        payload: { previewId: distribution.id, fingerprint: distribution.fingerprint },
+        ruleVersion: distribution.rule.version,
+      });
+    }
     const result = finalizeDistribution(preview, {
       id: distribution.id,
       finalizedAt: new Date().toISOString(),
@@ -255,6 +275,18 @@ export async function commitDistribution(admin: User, input: unknown) {
         }),
       },
     });
+    const recipientIds = new Set(
+      preview.allocations.filter((a) => a.amountMinor > 0n).map((a) => a.userId),
+    );
+    for (const userId of recipientIds) {
+      await notifyUser(tx, {
+        userId,
+        kind: "DISTRIBUTION_FINALIZED",
+        titleKey: "p4NotifDistributionFinalized",
+        bodyParams: {},
+        href: "/app/wallet",
+      });
+    }
     return { distribution: finalized };
   });
 }
