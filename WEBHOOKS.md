@@ -62,3 +62,9 @@ Failed attempts store only a stable error code and retry with exponential backof
 An ADMIN can inspect metadata through `GET /api/admin/webhooks`. `POST /api/admin/webhooks/<id>/retry` requires fresh password plus MFA and a reason; it accepts only RETRY/DEAD_LETTER, audits prior attempts/error, resets the retry budget and preserves the original payload. Correct the external/configuration cause before retrying. If the payload itself is invalid, send a distinct corrected provider event and preserve the rejected original; never edit history in place. PROCESSED entries cannot be manually replayed through this endpoint.
 
 Do not log signature headers, raw credentials or sensitive provider payloads. Production needs a retention/redaction policy, provider contract testing, reconciliation alerts, monitored scheduling and operator runbooks for delayed, out-of-order and disputed events. The current inbox proves signed correlation and durable replay foundations, not a completed external payment integration.
+
+## Pass 07 advertiser live webhook inspector and HMAC self-test
+
+`WebhookEvent` stores an optional `advertiserId` derived strictly from the authenticated `x-ruvora-workspace` header or correlated `campaignId` owner upon receipt. Advertisers (and delegated `VIEWER`/`BILLING`/`CAMPAIGN_MANAGER` workspace members) can inspect the 20 most recent delivery records scoped strictly to their own workspace via `GET /api/advertiser/integrations/events` without seeing any other workspace's traffic.
+
+Workspace managers can also run `POST /api/advertiser/integrations/ping` to sign and verify a synthetic diagnostic payload end-to-end against their active AES-256-GCM sealed workspace key (`ADVERTISER_WEBHOOK_PING_VERIFIED` audit log). The self-test produces zero ledger, RU, XP, or Event Point effects.

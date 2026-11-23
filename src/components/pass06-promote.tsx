@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   ArrowUpRight,
   Check,
@@ -144,6 +144,16 @@ export function PromoteHubScreen({ onProfileUpdated }: { onProfileUpdated?: () =
   const [creatorNote, setCreatorNote] = useState("");
 
   const hub = hubRes.data;
+  const deepLinkApplied = useRef(false);
+
+  useEffect(() => {
+    if (deepLinkApplied.current || !hub || typeof window === "undefined") return;
+    const requested = new URLSearchParams(window.location.search).get("campaign");
+    if (requested && hub.campaigns.some((c) => c.id === requested)) {
+      deepLinkApplied.current = true;
+      queueMicrotask(() => setTarget(`CAMPAIGN:${requested}`));
+    }
+  }, [hub]);
 
   const wizardOpen = useMemo(() => {
     if (showWizard !== null) return showWizard;

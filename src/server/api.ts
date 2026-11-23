@@ -18,7 +18,13 @@ import {
   requireUser,
   sessionCookieName,
 } from "./auth";
-import { getPublicProfile, saveProfile, saveProfileModules } from "./profiles";
+import {
+  getCreatorLinkClickStats,
+  getPublicProfile,
+  recordProfileLinkClick,
+  saveProfile,
+  saveProfileModules,
+} from "./profiles";
 import {
   createCampaign,
   duplicateCampaign,
@@ -87,6 +93,8 @@ import {
   getAdvertiserIntegration,
   rotateAdvertiserIntegrationKey,
   triggerDevTestConversion,
+  listAdvertiserWebhookEvents,
+  sendSignedWebhookPing,
   listWorkspaceMembers,
   addWorkspaceMember,
   removeWorkspaceMember,
@@ -124,6 +132,7 @@ import {
   removeShowcaseItem,
   upsertShowcaseItem,
 } from "./social-promote";
+import { getExploreMarketplace } from "./explore";
 export async function readJson(request: Request): Promise<unknown> {
   assert(
     request.headers.get("content-type")?.split(";")[0] === "application/json",
@@ -213,6 +222,22 @@ export async function handleApi(request: NextRequest, path: string[]) {
         const user = await getCurrentUser();
         return response({ user: user ? publicUser(user) : null }, requestId);
       }
+      if (route === "explore") {
+        await limitRate("explore-ip", ip, 120, 60);
+        const sp = request.nextUrl.searchParams;
+        return response(
+          await getExploreMarketplace({
+            q: sp.get("q") || undefined,
+            objective: sp.get("objective") || undefined,
+            platform: sp.get("platform") || undefined,
+            country: sp.get("country") || undefined,
+            category: sp.get("category") || undefined,
+          }),
+          requestId,
+        );
+      }
+      if (route === "profiles/link-clicks")
+        return response(await getCreatorLinkClickStats(await requireUser()), requestId);
       if (path[0] === "profiles" && path.length === 2)
         return response(await getPublicProfile(path[1]!), requestId);
       if (route === "payments/account") {
@@ -287,6 +312,11 @@ export async function handleApi(request: NextRequest, path: string[]) {
       if (route === "advertiser/integrations")
         return response(
           await getAdvertiserIntegration(await requireUser(), workspaceId),
+          requestId,
+        );
+      if (route === "advertiser/integrations/events")
+        return response(
+          await listAdvertiserWebhookEvents(await requireUser(), workspaceId),
           requestId,
         );
       if (route === "advertiser/team")
@@ -368,6 +398,8 @@ export async function handleApi(request: NextRequest, path: string[]) {
             workspaceId,
             cursor,
             limit,
+            userAgent: request.headers.get("user-agent"),
+            acceptLanguage: request.headers.get("accept-language"),
           }),
           requestId,
         );
@@ -386,6 +418,10 @@ export async function handleApi(request: NextRequest, path: string[]) {
         request.nextUrl.searchParams.get("workspaceId") ||
         request.headers.get("x-ruvora-workspace") ||
         undefined;
+      if (path[0] === "profiles" && path.length === 3 && path[2] === "link-click") {
+        await limitRate("profile-link-click-ip", ip, 120, 60);
+        return response(await recordProfileLinkClick(path[1]!, input), requestId);
+      }
       if (route === "attribution/start") {
         await limitRate("attribution-start-ip", ip, 120, 60);
         const { slug } = z
@@ -487,6 +523,8 @@ export async function handleApi(request: NextRequest, path: string[]) {
         return response(await estimateCampaignAudience(user, input, workspaceId), requestId);
       if (route === "advertiser/integrations/rotate")
         return response(await rotateAdvertiserIntegrationKey(user, workspaceId), requestId);
+      if (route === "advertiser/integrations/ping")
+        return response(await sendSignedWebhookPing(user, workspaceId), requestId);
       if (route === "advertiser/integrations/test")
         return response(await triggerDevTestConversion(user, input, workspaceId), requestId);
       if (route === "advertiser/team")

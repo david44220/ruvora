@@ -65,3 +65,13 @@ No new AI artwork was generated. `/share-card/[kind]/[slug]` reuses the exact ca
 - `?format=banner` (`1200×630`, default Open Graph / X / LinkedIn)
 
 Supported kinds include `profile`, `milestone`, `event`, `promo` (campaign + personal promo code + partner disclosure + QR to `/go/[slug]`), and `referral` (direct referral invitation + honest disclaimer + QR to `/go/[slug]`). Passing `?download=1` adds `Content-Disposition: attachment`.
+
+## Pass 07 PWA icon derivatives
+
+No new AI artwork was generated. `scripts/optimize-assets.mjs` derives three installable PWA icon PNGs directly from the canonical `assets/masters/ruvora-orb.png` master via Sharp (`fit: "cover"`, `position: "centre"`, PNG compression level 9), served through `src/app/manifest.ts` and `src/app/layout.tsx`:
+
+| Purpose           | File                                     | Dimensions | Encoded bytes |
+| ----------------- | ---------------------------------------- | ---------- | ------------: |
+| Standard PWA icon | `public/assets/pwa/icon-192.png`         | 192 × 192  |         70147 |
+| Maskable PWA icon | `public/assets/pwa/icon-512.png`         | 512 × 512  |        497507 |
+| Apple Touch icon  | `public/assets/pwa/apple-touch-icon.png` | 180 × 180  |         61814 |

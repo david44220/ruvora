@@ -159,6 +159,7 @@ model User {
   ugcDeliverables              UgcDeliverable[]
   audienceSnapshots            AudienceVerificationSnapshot[]
   showcaseItems                CreatorShowcaseItem[]
+  profileLinkClicks            ProfileLinkClick[]
 }
 
 model Session {
@@ -223,6 +224,7 @@ model Campaign {
   minimumReliabilityScore Int                  @default(0)
   creativeBrief           Json?
   abVariants              Json?
+  smartRouting            Json?
   maxActivitiesPerCreator Int?
   isTemplate              Boolean              @default(false)
   promoCodes              PromoCode[]
@@ -783,11 +785,13 @@ model WebhookEvent {
   leaseToken    String?
   processedAt   DateTime?
   lastErrorCode String?
+  advertiserId  String?
   isDemo        Boolean              @default(false)
   createdAt     DateTime             @default(now())
 
   @@unique([provider, externalId])
   @@index([status, nextAttemptAt])
+  @@index([advertiserId, createdAt])
 }
 
 model ProviderConversion {
@@ -1044,4 +1048,16 @@ model CreatorShowcaseItem {
 
   @@unique([creatorId, campaignId])
   @@index([creatorId, pinned, sortOrder])
+}
+
+model ProfileLinkClick {
+  id        String   @id @default(cuid())
+  userId    String
+  linkId    String
+  isDemo    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, linkId])
+  @@index([userId, createdAt])
 }

@@ -2,7 +2,17 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { ArrowUpRight, BadgeCheck, Copy, Link2, Trophy, Sparkles, Users } from "lucide-react";
+import {
+  ArrowUpRight,
+  BadgeCheck,
+  Copy,
+  FileText,
+  Link2,
+  Pin,
+  Trophy,
+  Sparkles,
+  Users,
+} from "lucide-react";
 import { useLocale } from "@/i18n/provider";
 import { api, minorMoney } from "@/lib/api";
 import { useResource, useAction } from "@/lib/hooks";
@@ -53,7 +63,7 @@ export interface PublicProfileData {
     audienceVerifiedPlatform?: string | null;
     followers: number;
     socialLinks: { platform: string; url: string; followers: number }[];
-    customLinks: { title: string; url: string }[];
+    customLinks: { id?: string; title: string; url: string; pinned?: boolean }[];
     isDemo: boolean;
     level: number;
     xp: number;
@@ -76,6 +86,22 @@ export function PublicProfile({
     tracked.current = true;
     void api("/attribution/start", { slug: data.entry.slug }).catch(() => {});
   }, [data.entry]);
+
+  function trackCustomLinkClick(linkId: string) {
+    const endpoint = `/api/profiles/${encodeURIComponent(p.handle)}/link-click`;
+    const body = JSON.stringify({ linkId });
+    try {
+      void fetch(endpoint, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+        keepalive: true,
+      }).catch(() => {});
+    } catch {
+      // Telemetry is strictly best-effort and never blocks navigation.
+    }
+  }
+
   const modules = p.profileModules?.length === 5 ? p.profileModules : defaultProfileModules;
   const isVerified = p.audienceStatus === "VERIFIED";
   const theme = p.profileTheme || "obsidian";
@@ -129,6 +155,13 @@ export function PublicProfile({
                   </span>
                 )}
               </div>
+              <div className="profile-mediakit-bar">
+                <a className="text-link" href={`/api/media-kit/${encodeURIComponent(p.handle)}`}>
+                  <FileText size={14} />
+                  {t("p7MediaKitBtn")}
+                  <ArrowUpRight size={13} />
+                </a>
+              </div>
               <p className="field-hint">
                 {isVerified
                   ? `${t("p4AudienceVerifiedBadge")}${p.audienceVerifiedPlatform ? ` · ${p.audienceVerifiedPlatform}` : ""}`
@@ -160,23 +193,30 @@ export function PublicProfile({
                     )}
                     {module.type === "LINKS" &&
                       (p.customLinks.length ? (
-                        p.customLinks.map((link, i) => (
-                          <a
-                            className="profile-link"
-                            key={i}
-                            href={link.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            <span>
-                              <span className="link-icon">
-                                <Link2 size={19} />
+                        p.customLinks.map((link, i) => {
+                          const linkId = link.id || `legacy_${i}`;
+                          return (
+                            <a
+                              className={`profile-link ${link.pinned ? "profile-link-pinned" : ""}`}
+                              key={linkId}
+                              href={link.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={() => trackCustomLinkClick(linkId)}
+                            >
+                              <span>
+                                <span className="link-icon">
+                                  {link.pinned ? <Pin size={18} /> : <Link2 size={19} />}
+                                </span>
+                                {link.title}
+                                {link.pinned && (
+                                  <small className="tag">{t("p7LinkPinnedBadge")}</small>
+                                )}
                               </span>
-                              {link.title}
-                            </span>
-                            <ArrowUpRight size={19} />
-                          </a>
-                        ))
+                              <ArrowUpRight size={19} />
+                            </a>
+                          );
+                        })
                       ) : (
                         <p className="panel-description">{t("noLinks")}</p>
                       ))}

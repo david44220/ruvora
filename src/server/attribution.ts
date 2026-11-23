@@ -12,6 +12,7 @@ import { canCreatorPromote } from "./campaign-eligibility";
 import { balance } from "./ledger";
 import { isDevelopment } from "./environment";
 import { SOCIAL_CHANNELS, type SocialChannel } from "../lib/social-channels";
+import { resolveSmartDestination } from "../lib/smart-routing";
 
 const socialChannelSchema = z.enum(SOCIAL_CHANNELS).default("DIRECT");
 
@@ -351,6 +352,7 @@ export async function startAttribution(
   entrySlug: string,
   tokens?: AttributionTokens,
   user?: User | null,
+  routingHints?: { userAgent?: string | null; acceptLanguage?: string | null },
 ) {
   const slug = publicSlug.parse(entrySlug);
   return atomic(async (tx) => {
@@ -472,7 +474,7 @@ export async function startAttribution(
         attributionToken: tokens!.attributionToken!,
         visitorToken: tokens!.visitorToken!,
         expiresAt: existing.expiresAt,
-        redirectTo: destination(entry),
+        redirectTo: destination(entry, existing.abVariantId, routingHints),
         source: existing.source,
       };
     }
@@ -533,7 +535,7 @@ export async function startAttribution(
       attributionToken,
       visitorToken,
       expiresAt: context.expiresAt,
-      redirectTo: destination(entry, assignedVariant),
+      redirectTo: destination(entry, assignedVariant, routingHints),
       source: context.source,
     };
   });
@@ -569,15 +571,31 @@ function destination(
   entry: {
     source: string;
     campaignId: string | null;
+    campaign?: { destinationUrl: string; smartRouting: unknown; abVariants: unknown } | null;
     event: { slug: string } | null;
     creator: { handle: string | null } | null;
   },
   abVariantId?: string | null,
+  routingHints?: { userAgent?: string | null; acceptLanguage?: string | null },
 ) {
   if (entry.source === "REFERRAL") return "/register";
   if (entry.campaignId) {
-    const base = `/app/opportunities?campaign=${encodeURIComponent(entry.campaignId)}`;
-    return abVariantId ? `${base}&variant=${encodeURIComponent(abVariantId)}` : base;
+    const params = new URLSearchParams({ campaign: entry.campaignId });
+    if (abVariantId) params.set("variant", abVariantId);
+    if (entry.campaign?.smartRouting && routingHints) {
+      const smart = resolveSmartDestination({
+        destinationUrl: entry.campaign.destinationUrl,
+        smartRouting: entry.campaign.smartRouting,
+        abVariants: entry.campaign.abVariants,
+        abVariantId,
+        userAgent: routingHints.userAgent,
+        acceptLanguage: routingHints.acceptLanguage,
+      });
+      if (smart.routeTarget !== "default" && smart.routeTarget !== "ab-variant") {
+        params.set("route", smart.routeTarget);
+      }
+    }
+    return `/app/opportunities?${params.toString()}`;
   }
   if (entry.event) return `/events/${encodeURIComponent(entry.event.slug)}`;
   return entry.creator?.handle ? `/@${entry.creator.handle}` : "/";

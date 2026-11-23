@@ -424,7 +424,7 @@ export function AdvertiserAnalytics() {
         <Stat label={t("p2Conversions")} value={s.conversions} />
         <Stat label={t("campaigns")} value={s.campaigns} />
         <Stat
-          label={t("advertiserRU")}
+          label={t("p7AnalyticsAdvertiserRu")}
           value={ruNumber(s.advertiserRuMicros, locale)}
           hint={t("noCashValue")}
         />

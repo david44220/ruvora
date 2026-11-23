@@ -12,6 +12,8 @@ import {
   Copy,
   QrCode,
   Users,
+  Megaphone,
+  Smartphone,
 } from "lucide-react";
 import Link from "next/link";
 import { useLocale } from "@/i18n/provider";
@@ -19,6 +21,7 @@ import { type MessageKey } from "@/i18n/messages";
 import { api, minorMoney, ruNumber } from "@/lib/api";
 import { useAction, useResource } from "@/lib/hooks";
 import { type Campaign, type Dashboard } from "@/lib/types";
+import { CAMPAIGN_TEMPLATES, type CampaignTemplatePreset } from "@/lib/campaign-templates";
 import { Notice, Status, Empty, Loading } from "./ui";
 import { PageTitle, Stat } from "./workspace-ui";
 import { AdvertiserAnalytics, TrackedShare } from "./growth";
@@ -61,6 +64,7 @@ export function CampaignForm({
   const [unitVal, setUnitVal] = useState("");
   const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>([]);
   const [estimate, setEstimate] = useState<AudienceEstimate | null>(null);
+  const [templateNotice, setTemplateNotice] = useState<string | null>(null);
   const wsQuery = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : "";
 
   const previewEur = (raw: string) => {
@@ -74,6 +78,52 @@ export function CampaignForm({
 
   function togglePlatform(p: string) {
     setSelectedPlatforms((cur) => (cur.includes(p) ? cur.filter((x) => x !== p) : [...cur, p]));
+  }
+
+  function applyTemplate(tpl: CampaignTemplatePreset) {
+    const form = formRef.current;
+    if (!form) return;
+    const setField = (name: string, val: string) => {
+      const el = form.elements.namedItem(name) as
+        HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null;
+      if (el) el.value = val;
+    };
+    const lang = locale === "fr" ? "fr" : "en";
+    const now = new Date();
+    const end = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const fmt = (d: Date) =>
+      `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+    setField("name", tpl.name[lang]);
+    setField("objective", tpl.objective);
+    setField("deliveryMode", tpl.deliveryMode);
+    setField("destinationUrl", tpl.destinationUrl);
+    setField("budgetMinor", tpl.budgetMinor);
+    setField("dailyBudgetMinor", tpl.dailyBudgetMinor);
+    setField("unitCostMinor", tpl.unitCostMinor);
+    setBudgetVal(tpl.budgetMinor);
+    setDailyVal(tpl.dailyBudgetMinor);
+    setUnitVal(tpl.unitCostMinor);
+    setField("allowedCountries", tpl.allowedCountries);
+    setField("allowedCities", tpl.allowedCities);
+    setField("allowedLanguages", tpl.allowedLanguages);
+    setField("creatorCategories", tpl.creatorCategories);
+    setField("minimumCreatorFollowers", tpl.minimumCreatorFollowers);
+    setField("maximumCreatorFollowers", tpl.maximumCreatorFollowers);
+    setField("startAt", fmt(now));
+    setField("endAt", fmt(end));
+    setField("briefHeadline", tpl.briefHeadline[lang]);
+    setField("briefFormat", tpl.briefFormat[lang]);
+    setField("briefTalkingPoints", tpl.briefTalkingPoints[lang]);
+    setField("briefHashtags", tpl.briefHashtags);
+    setField("briefCta", tpl.briefCta[lang]);
+    setField("briefDisclosure", tpl.briefDisclosure[lang]);
+    setField("briefHooks", tpl.briefHooks[lang]);
+    setField("smartIosUrl", tpl.smartIosUrl ?? "");
+    setField("smartAndroidUrl", tpl.smartAndroidUrl ?? "");
+    setSelectedPlatforms(tpl.platforms);
+    setTemplateNotice(t("p7TemplateApplied"));
   }
 
   function parseTargeting(f: FormData) {
@@ -167,6 +217,17 @@ export function CampaignForm({
     if (varBLabel && varBUrl)
       abVariants.push({ id: "B", label: varBLabel, destinationUrl: varBUrl, weight: varBWeight });
 
+    const smartIosUrl = String(f.get("smartIosUrl") || "").trim();
+    const smartAndroidUrl = String(f.get("smartAndroidUrl") || "").trim();
+    const smartLocaleFr = String(f.get("smartLocaleFr") || "").trim();
+    const smartLocaleEn = String(f.get("smartLocaleEn") || "").trim();
+    const localeUrls: Record<string, string> = {};
+    if (smartLocaleFr) localeUrls.fr = smartLocaleFr;
+    if (smartLocaleEn) localeUrls.en = smartLocaleEn;
+    const hasSmartRouting = Boolean(
+      smartIosUrl || smartAndroidUrl || Object.keys(localeUrls).length > 0,
+    );
+
     const maxPerCreatorRaw = String(f.get("maxActivitiesPerCreator") || "").trim();
     const result = await action.run(
       () =>
@@ -192,6 +253,15 @@ export function CampaignForm({
               }
             : {}),
           ...(abVariants.length ? { abVariants } : {}),
+          ...(hasSmartRouting
+            ? {
+                smartRouting: {
+                  ...(smartIosUrl ? { iosUrl: smartIosUrl } : {}),
+                  ...(smartAndroidUrl ? { androidUrl: smartAndroidUrl } : {}),
+                  ...(Object.keys(localeUrls).length > 0 ? { localeUrls } : {}),
+                },
+              }
+            : {}),
           objective: f.get("objective"),
           destinationUrl: f.get("destinationUrl"),
           budgetMinor: f.get("budgetMinor"),
@@ -209,6 +279,31 @@ export function CampaignForm({
     <section className="panel" style={{ marginBottom: 25 }}>
       <div className="panel-header">
         <h3>{t("createCampaign")}</h3>
+      </div>
+      <div className="p7-templates-strip">
+        <div className="p7-templates-head">
+          <small className="eyebrow" style={{ margin: 0 }}>
+            {t("p7TemplatesEyebrow")}
+          </small>
+          <p className="field-hint" style={{ margin: "4px 0 10px" }}>
+            {t("p7TemplatesDesc")}
+          </p>
+        </div>
+        <div className="platform-chip-row">
+          {CAMPAIGN_TEMPLATES.map((tpl) => (
+            <button
+              key={tpl.id}
+              type="button"
+              className="tab-chip"
+              title={tpl.summary[locale === "fr" ? "fr" : "en"]}
+              onClick={() => applyTemplate(tpl)}
+            >
+              <Sparkles size={13} />
+              {tpl.label[locale === "fr" ? "fr" : "en"]}
+            </button>
+          ))}
+        </div>
+        {templateNotice && <Notice message={templateNotice} />}
       </div>
       <form ref={formRef} onSubmit={submit} className="form-stack">
         <div className="form-grid">
@@ -478,6 +573,51 @@ export function CampaignForm({
           </div>
         </details>
 
+        <details className="optional-section">
+          <summary>{t("p7SmartRoutingTitle")}</summary>
+          <p className="field-hint" style={{ marginTop: 10 }}>
+            {t("p7SmartRoutingDesc")}
+          </p>
+          <div className="form-grid" style={{ marginTop: 12 }}>
+            <label className="field">
+              {t("p7SmartIosUrl")}
+              <input
+                name="smartIosUrl"
+                type="url"
+                pattern="https://.*"
+                placeholder="https://apps.apple.com/app/..."
+              />
+            </label>
+            <label className="field">
+              {t("p7SmartAndroidUrl")}
+              <input
+                name="smartAndroidUrl"
+                type="url"
+                pattern="https://.*"
+                placeholder="https://play.google.com/store/apps/..."
+              />
+            </label>
+            <label className="field">
+              {t("p7SmartLocaleFrUrl")}
+              <input
+                name="smartLocaleFr"
+                type="url"
+                pattern="https://.*"
+                placeholder="https://example.com/fr"
+              />
+            </label>
+            <label className="field">
+              {t("p7SmartLocaleEnUrl")}
+              <input
+                name="smartLocaleEn"
+                type="url"
+                pattern="https://.*"
+                placeholder="https://example.com/en"
+              />
+            </label>
+          </div>
+        </details>
+
         {action.notice && <Notice message={action.notice} error={action.failed} />}
         <div>
           <button className="button" disabled={action.busy}>
@@ -724,7 +864,7 @@ export function AdvertiserScreen({
       )}
       <CreatorDirectoryPanel campaigns={displayedCampaigns} workspaceId={selectedWorkspaceId} />
       <UgcDeliverablesInboxPanel workspaceId={selectedWorkspaceId} />
-      <AdvertiserIntegrationsHub campaigns={displayedCampaigns} />
+      <AdvertiserIntegrationsHub campaigns={displayedCampaigns} workspaceId={selectedWorkspaceId} />
       <WorkspaceTeamPanel />
     </>
   );
@@ -742,7 +882,15 @@ function Opportunity({ campaign }: { campaign: Campaign }) {
   const joined = campaign.eventId && data?.events.some((e) => e.id === campaign.eventId);
 
   const activeVariant = campaign.abVariants?.find((v) => v.id === variantId);
-  const targetUrl = activeVariant?.destinationUrl || campaign.destinationUrl;
+  const targetUrl =
+    activeVariant?.destinationUrl || campaign.resolvedDestinationUrl || campaign.destinationUrl;
+  const smartTarget =
+    !activeVariant &&
+    campaign.resolvedRouteTarget &&
+    campaign.resolvedRouteTarget !== "default" &&
+    campaign.resolvedRouteTarget !== "ab-variant"
+      ? campaign.resolvedRouteTarget
+      : null;
   const brief = campaign.creativeBrief;
   const hasBrief = Boolean(
     brief &&
@@ -841,16 +989,32 @@ function Opportunity({ campaign }: { campaign: Campaign }) {
           </select>
         </label>
       )}
-      <a
-        className="text-link"
-        href={targetUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        style={{ marginTop: 10 }}
-      >
-        {t("visitDestination")}
-        <ArrowUpRight size={16} />
-      </a>
+      {smartTarget && (
+        <div className="profile-badge-row" style={{ justifyContent: "flex-start", marginTop: 10 }}>
+          <span className="tag tag-verified">
+            <Smartphone size={12} />
+            {t("p7SmartRouteBadgePrefix")}:{" "}
+            {smartTarget === "ios"
+              ? t("p7SmartRouteIos")
+              : smartTarget === "android"
+                ? t("p7SmartRouteAndroid")
+                : `${t("p7SmartRouteLocale")} (${smartTarget.replace("locale:", "").toUpperCase()})`}
+          </span>
+        </div>
+      )}
+      <div className="form-actions" style={{ marginTop: 10, alignItems: "center" }}>
+        <a className="text-link" href={targetUrl} target="_blank" rel="noopener noreferrer">
+          {t("visitDestination")}
+          <ArrowUpRight size={16} />
+        </a>
+        <Link
+          href={`/app/promote?campaign=${encodeURIComponent(campaign.id)}`}
+          className="button button-small button-secondary"
+        >
+          <Megaphone size={14} />
+          {t("p7OpenInPromoteStudio")}
+        </Link>
+      </div>
       {hasBrief && brief && (
         <details className="creative-brief-box">
           <summary>{t("p4BriefViewTitle")}</summary>

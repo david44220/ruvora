@@ -60,16 +60,18 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   const { slug } = await params;
   if (!isShareSlug(slug)) return recoverShare(request, "SHARE_LINK_INVALID", slug);
   const user = await getCurrentUser();
+  const userAgent = request.headers.get("user-agent");
+  const acceptLanguage = request.headers.get("accept-language");
+  const tokens = {
+    attributionToken: request.cookies.get(ATTRIBUTION_COOKIE)?.value,
+    visitorToken: request.cookies.get(VISITOR_COOKIE)?.value,
+  };
   let started: Awaited<ReturnType<typeof startAttribution>>;
   try {
-    started = await startAttribution(
-      slug,
-      {
-        attributionToken: request.cookies.get(ATTRIBUTION_COOKIE)?.value,
-        visitorToken: request.cookies.get(VISITOR_COOKIE)?.value,
-      },
-      user,
-    );
+    started =
+      userAgent || acceptLanguage
+        ? await startAttribution(slug, tokens, user, { userAgent, acceptLanguage })
+        : await startAttribution(slug, tokens, user);
   } catch (error) {
     if (error instanceof AppError && error.status < 500 && isShareRecoveryCode(error.code))
       return recoverShare(request, error.code, slug);

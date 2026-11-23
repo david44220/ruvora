@@ -7,7 +7,7 @@ import { requireRole } from "./auth";
 import { assertEligible } from "./profiles";
 import { openSecret, sealSecret, secretDigest } from "./security/crypto";
 import { assertDevelopment, isDevelopment } from "./environment";
-import { signWebhook, receiveWebhook, processWebhook } from "./webhooks";
+import { signWebhook, verifyWebhookSignature, receiveWebhook, processWebhook } from "./webhooks";
 import { notifyUser } from "./notifications";
 import { resolveAdvertiserWorkspace } from "./workspaces";
 
@@ -37,15 +37,41 @@ function integrationSnippets(advertiserId: string) {
     "currency": "EUR"
   }
 }`,
+    woocommerce: `// WooCommerce Order Completed hook (PHP / Node relay)
+// POST https://<your-ruvora-domain>${endpoint}
+// Header: x-ruvora-workspace: ${advertiserId}
+// Header: x-ruvora-signature: t=<unix_ts>,v1=<hmac_sha256("conversion.<unix_ts>." + rawBody, RUVORA_SIGNING_KEY)>
+{
+  "id": "wc_order_<ORDER_ID>",
+  "type": "conversion.verified",
+  "occurredAt": "<ISO_8601_TIMESTAMP>",
+  "data": {
+    "activityId": "<RUVORA_ACTIVITY_ID>",
+    "campaignId": "<YOUR_CAMPAIGN_ID>",
+    "externalConversionId": "wc_<ORDER_ID>",
+    "convertedAt": "<ISO_8601_TIMESTAMP>",
+    "valueMinor": "3900",
+    "currency": "EUR"
+  }
+}`,
     stripe: `// Stripe checkout.session.completed -> Ruvora conversion callback
 // Header: x-ruvora-workspace: ${advertiserId}
 // Sign raw JSON body with HMAC-SHA256 using your Ruvora signing key (workspace ${advertiserId.slice(0, 8)})
 // Payload context: "conversion.<timestamp>.<rawBody>"`,
-    zapier: `// Zapier / Make / WooCommerce / Webflow Webhook Action
+    zapier: `// Zapier / Make / Webflow Webhook Action
 // URL: https://<your-ruvora-domain>${endpoint}
 // Header: x-ruvora-workspace: ${advertiserId}
 // Method: POST | Content-Type: application/json
 // Pass ruvora_activity_id from your landing URL query or promo code tracking.`,
+    curl: `# Generic signed HMAC-SHA256 conversion webhook test
+TS=$(date +%s)
+BODY='{"id":"order_1042","type":"conversion.verified","occurredAt":"2026-11-23T12:00:00Z","data":{"activityId":"<ACT_ID>","campaignId":"<CAMP_ID>","externalConversionId":"ord_1042","convertedAt":"2026-11-23T12:00:00Z","valueMinor":"2900","currency":"EUR"}}'
+SIG=$(printf "conversion.%s.%s" "$TS" "$BODY" | openssl dgst -sha256 -hmac "$RUVORA_SIGNING_KEY" | awk '{print $2}')
+curl -X POST "https://<your-ruvora-domain>${endpoint}" \\
+  -H "Content-Type: application/json" \\
+  -H "x-ruvora-workspace: ${advertiserId}" \\
+  -H "x-ruvora-signature: t=$TS,v1=$SIG" \\
+  -d "$BODY"`,
   };
 }
 
@@ -161,6 +187,93 @@ export async function rotateAdvertiserIntegrationKey(user: User, workspaceId?: s
   });
 }
 
+export async function listAdvertiserWebhookEvents(user: User, workspaceId?: string) {
+  const ctx = await resolveAdvertiserWorkspace(user, workspaceId, "VIEW");
+  const events = await db.webhookEvent.findMany({
+    where: { advertiserId: ctx.ownerId },
+    orderBy: { createdAt: "desc" },
+    take: 20,
+    select: {
+      id: true,
+      provider: true,
+      externalId: true,
+      eventType: true,
+      status: true,
+      attempts: true,
+      lastErrorCode: true,
+      occurredAt: true,
+      processedAt: true,
+      isDemo: true,
+      createdAt: true,
+    },
+  });
+  return { events };
+}
+
+/**
+ * Verifies the advertiser workspace's active AES-256-GCM sealed HMAC signing key end-to-end
+ * by signing and verifying a diagnostic payload without creating any economic or ledger effects.
+ */
+export async function sendSignedWebhookPing(user: User, workspaceId?: string) {
+  const ctx = await resolveAdvertiserWorkspace(user, workspaceId, "MANAGE_CAMPAIGNS");
+  const record = await db.advertiserIntegration.findUnique({
+    where: { advertiserId: ctx.ownerId },
+    select: { id: true, keyPrefix: true, sealedSigningKey: true },
+  });
+  assert(
+    record,
+    "WEBHOOK_KEY_NOT_CONFIGURED",
+    "Generate a workspace signing key before testing HMAC signatures.",
+    409,
+  );
+  const startedAt = Date.now();
+  const keys = await resolveAdvertiserSigningKeys(ctx.ownerId);
+  assert(
+    keys.length > 0,
+    "WEBHOOK_KEY_NOT_CONFIGURED",
+    "Workspace signing key could not be loaded.",
+    500,
+  );
+  const activeKey = keys[0]!;
+  const provider = isDevelopment() ? "development-conversion" : "conversion";
+  const pingId = `ping-${randomUUID().slice(0, 12)}`;
+  const rawBody = Buffer.from(
+    JSON.stringify({
+      id: pingId,
+      type: "conversion.verified",
+      occurredAt: new Date().toISOString(),
+      data: { diagnostic: true, workspaceOwnerId: ctx.ownerId },
+    }),
+    "utf8",
+  );
+  const signature = signWebhook(provider, rawBody, activeKey);
+  verifyWebhookSignature(provider, rawBody, signature, activeKey);
+  const latencyMs = Math.max(1, Date.now() - startedAt);
+  await db.auditLog.create({
+    data: {
+      actorId: user.id,
+      action: "ADVERTISER_WEBHOOK_PING_VERIFIED",
+      targetId: record.id,
+      details: {
+        workspaceOwnerId: ctx.ownerId,
+        keyPrefix: record.keyPrefix,
+        provider,
+        pingId,
+        latencyMs,
+      },
+    },
+  });
+  return {
+    ok: true,
+    verified: true,
+    pingId,
+    provider,
+    keyPrefix: record.keyPrefix,
+    latencyMs,
+    economicEffect: "NONE" as const,
+  };
+}
+
 const devTestSchema = z
   .object({
     campaignId: z.string().min(1).max(100),
@@ -225,7 +338,7 @@ export async function triggerDevTestConversion(user: User, input: unknown, works
   });
   const rawBody = Buffer.from(payload, "utf8");
   const signature = signWebhook("development-conversion", rawBody, secret);
-  const received = await receiveWebhook("development-conversion", rawBody, signature);
+  const received = await receiveWebhook("development-conversion", rawBody, signature, ctx.ownerId);
   await processWebhook(received.eventId);
   return {
     ok: true,

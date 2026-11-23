@@ -50,6 +50,7 @@ import {
   WalletPayoutsAndStatementPanel,
 } from "./pass05-creator";
 import { PromoteHubScreen } from "./pass06-promote";
+import { MediaKitAndLinksPanel, MobileBottomNav, PwaInstallBanner } from "./pwa-mobile";
 import { CreatorAnalytics, ReferralsScreen } from "./growth";
 import { EventStudio } from "./event-studio";
 import { SecurityScreen } from "./security";
@@ -162,6 +163,7 @@ export function AppShell({
             </div>
           </header>
           <main className="app-content" id="main">
+            <PwaInstallBanner />
             {(development || resource.data?.isDemo) && (
               <div className="dev-banner">
                 <FlaskConical size={14} />
@@ -185,6 +187,7 @@ export function AppShell({
             )}
           </main>
         </div>
+        <MobileBottomNav />
       </div>
     </AppContext.Provider>
   );
@@ -297,6 +300,7 @@ function CreatorScreen({ data, reload }: { data: Dashboard; reload: () => Promis
         />
       </div>
       <AudienceVerificationCard data={data} reload={reload} />
+      <MediaKitAndLinksPanel handle={data.user.handle} customLinks={data.user.customLinks ?? []} />
       <CreatorPromoCodesPanel handle={data.user.handle} />
       <EmbeddableWidgetCard handle={data.user.handle} />
       <CreatorAnalytics />

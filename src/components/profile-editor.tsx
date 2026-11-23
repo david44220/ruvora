@@ -5,20 +5,39 @@ import { useRef, useState, type FormEvent } from "react";
 import { ArrowRight, Plus, Trash2 } from "lucide-react";
 import { useLocale } from "@/i18n/provider";
 import { api } from "@/lib/api";
-import { useAction } from "@/lib/hooks";
+import { useAction, useResource } from "@/lib/hooks";
 import { type Role, type User } from "@/lib/types";
 import { Notice } from "./ui";
 
 type SocialRow = { key: number; platform: string; url: string; followers: string };
-type LinkRow = { key: number; title: string; url: string };
+type LinkRow = {
+  key: number;
+  id?: string;
+  title: string;
+  url: string;
+  pinned: boolean;
+  startsAt: string;
+  endsAt: string;
+};
 const platforms = ["Instagram", "TikTok", "YouTube", "Twitch", "X", "Discord", "Website"];
 const firstName = (name: string, index: number) => (index === 0 ? name : `${name}-${index}`);
 const httpsPattern = "https://[^\\s]+";
+
+function toLocalDatetimeInput(iso?: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
 /** Keep all persisted rows; removing one is always an explicit user action. */
 export function ProfileForm({ user, onSaved }: { user: User; onSaved?: (user: User) => void }) {
   const { t, locale } = useLocale();
   const action = useAction();
+  const linkClicks = useResource<{ totalClicks: number; byLinkId: Record<string, number> }>(
+    "/profiles/link-clicks",
+  );
   const nextKey = useRef(100);
   const [roles, setRoles] = useState<Role[]>(user.roles);
   const [socials, setSocials] = useState<SocialRow[]>(() =>
@@ -32,8 +51,16 @@ export function ProfileForm({ user, onSaved }: { user: User; onSaved?: (user: Us
   );
   const [links, setLinks] = useState<LinkRow[]>(() =>
     user.customLinks?.length
-      ? user.customLinks.map((link, key) => ({ ...link, key }))
-      : [{ key: 0, title: "", url: "" }],
+      ? user.customLinks.map((link, key) => ({
+          key,
+          id: link.id,
+          title: link.title,
+          url: link.url,
+          pinned: Boolean(link.pinned),
+          startsAt: toLocalDatetimeInput(link.startsAt),
+          endsAt: toLocalDatetimeInput(link.endsAt),
+        }))
+      : [{ key: 0, title: "", url: "", pinned: false, startsAt: "", endsAt: "" }],
   );
 
   function updateSocial(key: number, update: Partial<Omit<SocialRow, "key">>) {
@@ -79,12 +106,32 @@ export function ProfileForm({ user, onSaved }: { user: User; onSaved?: (user: Us
             })),
           links: links
             .filter((row) => row.url.trim())
-            .map((row) => ({ title: row.title.trim(), url: row.url.trim() })),
+            .map((row) => ({
+              ...(row.id ? { id: row.id } : {}),
+              title: row.title.trim(),
+              url: row.url.trim(),
+              ...(row.pinned ? { pinned: true } : {}),
+              ...(row.startsAt ? { startsAt: new Date(row.startsAt).toISOString() } : {}),
+              ...(row.endsAt ? { endsAt: new Date(row.endsAt).toISOString() } : {}),
+            })),
         }),
       t("saved"),
     );
     if (result) {
       setRoles(result.user.roles);
+      if (result.user.customLinks?.length) {
+        setLinks(
+          result.user.customLinks.map((link, key) => ({
+            key,
+            id: link.id,
+            title: link.title,
+            url: link.url,
+            pinned: Boolean(link.pinned),
+            startsAt: toLocalDatetimeInput(link.startsAt),
+            endsAt: toLocalDatetimeInput(link.endsAt),
+          })),
+        );
+      }
       onSaved?.(result.user);
     }
   }
@@ -278,60 +325,109 @@ export function ProfileForm({ user, onSaved }: { user: User; onSaved?: (user: Us
         </button>
       </div>
 
-      {links.map((link, index) => (
-        <fieldset
-          className="form-stack"
-          key={link.key}
-          style={{ border: 0, padding: 0, minWidth: 0 }}
-        >
-          <legend className="field-hint" style={{ marginBottom: 12 }}>
-            {t("linkTitleLabel")} {index + 1}
-          </legend>
-          <div className="form-grid">
-            <label className="field">
-              {t("linkTitleLabel")}
-              <input
-                name={firstName("linkTitle", index)}
-                maxLength={50}
-                required={Boolean(link.url.trim())}
-                value={link.title}
-                onChange={(event) => updateLink(link.key, { title: event.target.value })}
-              />
-            </label>
-            <label className="field">
-              {t("linkUrl")}
-              <input
-                name={firstName("linkUrl", index)}
-                type="url"
-                maxLength={2048}
-                pattern={httpsPattern}
-                required={Boolean(link.title.trim())}
-                value={link.url}
-                onChange={(event) => updateLink(link.key, { url: event.target.value })}
-              />
-            </label>
-          </div>
-          <div>
-            <button
-              type="button"
-              className="button button-secondary button-small"
-              disabled={action.busy}
-              onClick={() => setLinks((rows) => rows.filter((row) => row.key !== link.key))}
-              aria-label={`${t("remove")} ${t("linkTitleLabel")} ${index + 1}`}
+      {links.map((link, index) => {
+        const clickCount = link.id ? (linkClicks.data?.byLinkId[link.id] ?? 0) : 0;
+        return (
+          <fieldset
+            className="form-stack"
+            key={link.key}
+            style={{ border: 0, padding: 0, minWidth: 0 }}
+          >
+            <legend className="field-hint" style={{ marginBottom: 12 }}>
+              {t("linkTitleLabel")} {index + 1}
+              {link.id && (
+                <>
+                  {" "}
+                  · <strong>{clickCount}</strong> {t("p7LinkClicksLabel")}
+                </>
+              )}
+            </legend>
+            <div className="form-grid">
+              <label className="field">
+                {t("linkTitleLabel")}
+                <input
+                  name={firstName("linkTitle", index)}
+                  maxLength={50}
+                  required={Boolean(link.url.trim())}
+                  value={link.title}
+                  onChange={(event) => updateLink(link.key, { title: event.target.value })}
+                />
+              </label>
+              <label className="field">
+                {t("linkUrl")}
+                <input
+                  name={firstName("linkUrl", index)}
+                  type="url"
+                  maxLength={2048}
+                  pattern={httpsPattern}
+                  required={Boolean(link.title.trim())}
+                  value={link.url}
+                  onChange={(event) => updateLink(link.key, { url: event.target.value })}
+                />
+              </label>
+              <label className="field">
+                {t("p7LinkStartsAt")}
+                <input
+                  name={firstName("linkStartsAt", index)}
+                  type="datetime-local"
+                  value={link.startsAt}
+                  onChange={(event) => updateLink(link.key, { startsAt: event.target.value })}
+                />
+              </label>
+              <label className="field">
+                {t("p7LinkEndsAt")}
+                <input
+                  name={firstName("linkEndsAt", index)}
+                  type="datetime-local"
+                  value={link.endsAt}
+                  onChange={(event) => updateLink(link.key, { endsAt: event.target.value })}
+                />
+              </label>
+            </div>
+            <div
+              className="form-actions"
+              style={{ justifyContent: "space-between", alignItems: "center" }}
             >
-              <Trash2 size={15} />
-              {t("remove")}
-            </button>
-          </div>
-        </fieldset>
-      ))}
+              <label className="checkbox-field">
+                <input
+                  type="checkbox"
+                  checked={link.pinned}
+                  onChange={(event) => updateLink(link.key, { pinned: event.target.checked })}
+                />
+                {t("p7LinkPinned")}
+              </label>
+              <button
+                type="button"
+                className="button button-secondary button-small"
+                disabled={action.busy}
+                onClick={() => setLinks((rows) => rows.filter((row) => row.key !== link.key))}
+                aria-label={`${t("remove")} ${t("linkTitleLabel")} ${index + 1}`}
+              >
+                <Trash2 size={15} />
+                {t("remove")}
+              </button>
+            </div>
+          </fieldset>
+        );
+      })}
+      <p className="field-hint">{t("p7LinkScheduleHint")}</p>
       <div>
         <button
           type="button"
           className="button button-secondary button-small"
           disabled={action.busy || links.length >= 12}
           onClick={() =>
-            setLinks((rows) => [...rows, { key: nextKey.current++, title: "", url: "" }])
+            setLinks((rows) => [
+              ...rows,
+              {
+                key: nextKey.current++,
+                title: "",
+                url: "",
+                pinned: false,
+                startsAt: "",
+                endsAt: "",
+              },
+            ])
           }
         >
           <Plus size={15} />

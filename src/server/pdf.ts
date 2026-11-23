@@ -274,3 +274,162 @@ export async function generateCreatorStatementPdf(user: User, period: string) {
     buffer: buildPdfDocument(`Creator Earnings Statement ${label}`, lines),
   };
 }
+
+export async function generateCreatorMediaKitPdf(handle: string) {
+  const normalized = handle.trim().toLowerCase().replace(/^@/, "");
+  assert(
+    /^[a-z0-9_]{3,24}$/.test(normalized),
+    "PROFILE_NOT_FOUND",
+    "This creator profile is not available.",
+    404,
+  );
+  const user = await db.user.findUnique({
+    where: { handle: normalized },
+    select: {
+      id: true,
+      displayName: true,
+      handle: true,
+      bio: true,
+      category: true,
+      city: true,
+      country: true,
+      followers: true,
+      audienceStatus: true,
+      audienceVerifiedPlatform: true,
+      audienceVerifiedAt: true,
+      socialLinks: true,
+      isDemo: true,
+      suspended: true,
+      economicHold: true,
+      createdAt: true,
+    },
+  });
+  assert(
+    user && !user.suspended && !user.economicHold && (isDevelopment() || !user.isDemo),
+    "PROFILE_NOT_FOUND",
+    "This creator profile is not available.",
+    404,
+  );
+
+  const [validatedActions, attributedSessions, showcaseItems, activityXp, questXp] =
+    await Promise.all([
+      db.activity.count({ where: { creatorId: user.id, state: "VALIDATED" } }),
+      db.growthEvent.count({ where: { creatorId: user.id, type: "ATTRIBUTED_SESSION" } }),
+      db.creatorShowcaseItem.findMany({
+        where: {
+          creatorId: user.id,
+          pinned: true,
+          campaign: { state: "ACTIVE", ...(isDevelopment() ? {} : { isDemo: false }) },
+        },
+        include: { campaign: { select: { name: true, objective: true } } },
+        orderBy: [{ sortOrder: "asc" }],
+        take: 6,
+      }),
+      db.xpEntry.aggregate({ where: { userId: user.id }, _sum: { amount: true } }),
+      db.questClaim.aggregate({ where: { userId: user.id }, _sum: { xpAwarded: true } }),
+    ]);
+
+  const rejectedActions = await db.activity.count({
+    where: { creatorId: user.id, state: "REJECTED" },
+  });
+  const totalReviewed = validatedActions + rejectedActions;
+  const reliabilityScore =
+    totalReviewed === 0
+      ? 75
+      : Math.max(0, Math.min(100, Math.round((validatedActions / totalReviewed) * 100)));
+  const trustTier =
+    validatedActions >= 20 && reliabilityScore >= 90
+      ? "AMBASSADOR"
+      : validatedActions >= 3 && reliabilityScore >= 75
+        ? "TRUSTED"
+        : "EXPLORER";
+
+  const totalXp = (activityXp._sum.amount ?? 0) + (questXp._sum.xpAwarded ?? 0);
+  const level = Math.floor(Math.sqrt(Math.max(0, totalXp) / 100)) + 1;
+  const siteBase = (
+    process.env.PUBLIC_SITE_URL ||
+    process.env.APP_URL ||
+    "https://ruvora.com"
+  ).replace(/\/+$/, "");
+  const profileUrl = `${siteBase}/@${user.handle}`;
+
+  const socials = Array.isArray(user.socialLinks)
+    ? (user.socialLinks as { platform?: string; followers?: number; url?: string }[]).filter(
+        (s) => s && typeof s.platform === "string",
+      )
+    : [];
+
+  const lines: PdfLine[] = [];
+  if (isDevelopment() || user.isDemo) {
+    lines.push({
+      text: "DEVELOPMENT PROFILE - DEMONSTRATION MEDIA KIT",
+      size: 11,
+      bold: true,
+    });
+  }
+  lines.push(
+    { text: `${user.displayName} (@${user.handle})`, size: 15, bold: true, gapBefore: 6 },
+    {
+      text: `Category: ${user.category} | Location: ${[user.city, user.country].filter(Boolean).join(", ") || "Global"}`,
+      size: 10,
+    },
+    { text: `Public Ruvora Link: ${profileUrl}`, size: 10, bold: true },
+  );
+  if (user.bio) {
+    lines.push({ text: `Bio: ${user.bio.slice(0, 140)}`, size: 9, gapBefore: 4 });
+  }
+
+  lines.push(
+    { text: "Audience & Trust Credentials", size: 12, bold: true, gapBefore: 12 },
+    {
+      text: `Declared / Verified Reach: ${user.followers.toLocaleString("en-US")} followers (${user.audienceStatus === "VERIFIED" ? `VERIFIED via ${user.audienceVerifiedPlatform || "bio challenge"}` : "SELF-DECLARED"})`,
+    },
+    {
+      text: `Ruvora Trust Tier: ${trustTier} | Reliability Score: ${reliabilityScore}/100 | Level ${level} (${totalXp} XP)`,
+    },
+    {
+      text: `Verified Platform Activity: ${attributedSessions} attributed session(s) | ${validatedActions} independently validated action(s)`,
+    },
+    { text: "Connected Social Channels", size: 12, bold: true, gapBefore: 12 },
+  );
+
+  if (socials.length === 0) {
+    lines.push({ text: "No public social links listed yet." });
+  } else {
+    for (const s of socials.slice(0, 8)) {
+      lines.push({
+        text: `- ${s.platform}: ${(s.followers ?? 0).toLocaleString("en-US")} followers (${(s.url ?? "").slice(0, 62)})`,
+        size: 9,
+      });
+    }
+  }
+
+  lines.push({ text: "Active Curated Showcase Collections", size: 12, bold: true, gapBefore: 12 });
+  if (showcaseItems.length === 0) {
+    lines.push({ text: "No active campaigns currently pinned on public showcase." });
+  } else {
+    for (const item of showcaseItems) {
+      lines.push({
+        text: `- [${item.collectionName}] ${item.campaign.name.slice(0, 46)} (${item.campaign.objective})`,
+        size: 9,
+      });
+    }
+  }
+
+  lines.push(
+    { text: "Partnership & Compliance Note", size: 11, bold: true, gapBefore: 14 },
+    {
+      text: "All Ruvora creator collaborations use transparent partner disclosures (#ad / #collaboration),",
+      size: 9,
+    },
+    {
+      text: "server-issued attribution links (/go/[slug]), and independent validation. No guaranteed ROI or earnings.",
+      size: 9,
+    },
+  );
+
+  return {
+    filename: `ruvora-mediakit-${user.handle}.pdf`,
+    buffer: buildPdfDocument(`Creator Media Kit - @${user.handle}`, lines),
+  };
+}
