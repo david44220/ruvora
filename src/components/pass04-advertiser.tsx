@@ -1,40 +1,84 @@
 "use client";
 import { useState, type FormEvent } from "react";
-import { Copy, KeyRound, Plug, Trash2, UserPlus, Users, Webhook } from "lucide-react";
+import {
+  CheckCircle2,
+  Copy,
+  KeyRound,
+  Plug,
+  RefreshCw,
+  Trash2,
+  UserPlus,
+  Users,
+  Webhook,
+} from "lucide-react";
 import { useLocale } from "@/i18n/provider";
 import type { MessageKey } from "@/i18n/messages";
 import { api } from "@/lib/api";
 import { useAction, useResource } from "@/lib/hooks";
 import type { Campaign } from "@/lib/types";
-import { Eyebrow, Notice, Empty, Loading } from "./ui";
+import { Eyebrow, Notice, Empty, Loading, Status } from "./ui";
 
 interface IntegrationData {
   configured: boolean;
   keyPrefix: string | null;
   lastRotatedAt: string | null;
+  graceWindowUntil?: string | null;
   development: boolean;
   snippets: {
     endpoint: string;
     devEndpoint: string;
     shopify: string;
+    woocommerce: string;
     stripe: string;
     zapier: string;
+    curl: string;
   };
 }
 
-export function AdvertiserIntegrationsHub({ campaigns }: { campaigns: Campaign[] }) {
+interface WorkspaceWebhookRow {
+  id: string;
+  provider: string;
+  externalId: string;
+  eventType: string;
+  status: string;
+  attempts: number;
+  lastErrorCode: string | null;
+  occurredAt: string;
+  processedAt: string | null;
+  isDemo: boolean;
+  createdAt: string;
+}
+
+export function AdvertiserIntegrationsHub({
+  campaigns,
+  workspaceId,
+}: {
+  campaigns: Campaign[];
+  workspaceId?: string;
+}) {
   const { t, locale } = useLocale();
-  const res = useResource<IntegrationData>("/advertiser/integrations");
+  const wsQuery = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : "";
+  const res = useResource<IntegrationData>(`/advertiser/integrations${wsQuery}`);
+  const eventsRes = useResource<{ events: WorkspaceWebhookRow[] }>(
+    `/advertiser/integrations/events${wsQuery}`,
+  );
   const action = useAction();
-  const [tab, setTab] = useState<"shopify" | "stripe" | "zapier">("shopify");
+  const [tab, setTab] = useState<"shopify" | "woocommerce" | "stripe" | "zapier" | "curl">(
+    "shopify",
+  );
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
+  const [pingResult, setPingResult] = useState<{
+    pingId: string;
+    keyPrefix: string;
+    latencyMs: number;
+  } | null>(null);
   const [testCampaignId, setTestCampaignId] = useState<string>("");
 
   async function rotate() {
     const out = await action.run(
       () =>
         api<{ keyPrefix: string; signingKey: string; lastRotatedAt: string }>(
-          "/advertiser/integrations/rotate",
+          `/advertiser/integrations/rotate${wsQuery}`,
           {},
         ),
       t("p4KeyStatusConfigured"),
@@ -45,13 +89,28 @@ export function AdvertiserIntegrationsHub({ campaigns }: { campaigns: Campaign[]
     }
   }
 
+  async function runSignedPing() {
+    const out = await action.run(
+      () =>
+        api<{ ok: boolean; pingId: string; keyPrefix: string; latencyMs: number }>(
+          `/advertiser/integrations/ping${wsQuery}`,
+          {},
+        ),
+      t("p7WebhookPingSuccess"),
+    );
+    if (out) {
+      setPingResult({ pingId: out.pingId, keyPrefix: out.keyPrefix, latencyMs: out.latencyMs });
+    }
+  }
+
   async function runDevTest() {
     const targetId = testCampaignId || conversionCampaigns[0]?.id;
     if (!targetId) return;
-    await action.run(
-      () => api("/advertiser/integrations/test", { campaignId: targetId }),
+    const out = await action.run(
+      () => api(`/advertiser/integrations/test${wsQuery}`, { campaignId: targetId }),
       t("p4DevTestConvSuccess"),
     );
+    if (out) await eventsRes.reload();
   }
 
   const conversionCampaigns = campaigns.filter((c) => c.objective === "CONVERSION");
@@ -83,16 +142,38 @@ export function AdvertiserIntegrationsHub({ campaigns }: { campaigns: Campaign[]
                 </small>
               )}
             </div>
-            <button
-              type="button"
-              className="button button-small button-secondary"
-              disabled={action.busy}
-              onClick={() => void rotate()}
-            >
-              <KeyRound size={15} />
-              {t("p4RotateKeyBtn")}
-            </button>
+            <div className="form-actions" style={{ margin: 0 }}>
+              <button
+                type="button"
+                className="button button-small button-secondary"
+                disabled={action.busy || !res.data.configured}
+                onClick={() => void runSignedPing()}
+                title={!res.data.configured ? t("p7WebhookPingNeedKey") : undefined}
+              >
+                <CheckCircle2 size={15} />
+                {t("p7WebhookPingBtn")}
+              </button>
+              <button
+                type="button"
+                className="button button-small button-secondary"
+                disabled={action.busy}
+                onClick={() => void rotate()}
+              >
+                <KeyRound size={15} />
+                {t("p4RotateKeyBtn")}
+              </button>
+            </div>
           </div>
+
+          {pingResult && (
+            <div className="notice" role="status" style={{ marginBottom: 14 }}>
+              <CheckCircle2 size={17} />
+              <span>
+                {t("p7WebhookPingSuccess")} ({pingResult.keyPrefix}•• · {pingResult.pingId} ·{" "}
+                {pingResult.latencyMs}ms)
+              </span>
+            </div>
+          )}
 
           {revealedKey && (
             <div className="challenge-code-box" style={{ marginBottom: 16 }}>
@@ -120,8 +201,10 @@ export function AdvertiserIntegrationsHub({ campaigns }: { campaigns: Campaign[]
             {(
               [
                 ["shopify", "Shopify"],
+                ["woocommerce", t("p7WebhookSnippetWoo")],
                 ["stripe", "Stripe"],
-                ["zapier", "Zapier / WooCommerce / Webflow"],
+                ["zapier", "Zapier / Make"],
+                ["curl", t("p7WebhookSnippetCurl")],
               ] as const
             ).map(([id, label]) => (
               <button
@@ -184,6 +267,64 @@ export function AdvertiserIntegrationsHub({ campaigns }: { campaigns: Campaign[]
               <p className="field-hint">{t("p4DevTestConvNote")}</p>
             </div>
           )}
+
+          <div className="p7-webhook-inspector">
+            <div className="panel-header" style={{ marginBottom: 10 }}>
+              <div>
+                <strong>{t("p7WebhookInspectorTitle")}</strong>
+                <p className="field-hint" style={{ margin: "4px 0 0" }}>
+                  {t("p7WebhookInspectorDesc")}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="button button-small button-secondary"
+                disabled={eventsRes.loading}
+                onClick={() => void eventsRes.reload()}
+              >
+                <RefreshCw size={14} />
+                {t("p7WebhookRefreshBtn")}
+              </button>
+            </div>
+            {eventsRes.loading ? (
+              <Loading />
+            ) : !eventsRes.data?.events.length ? (
+              <Empty>{t("p7WebhookEmpty")}</Empty>
+            ) : (
+              <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>{t("p7WebhookColEvent")}</th>
+                      <th>{t("p7WebhookColExternalId")}</th>
+                      <th>{t("p7WebhookColStatus")}</th>
+                      <th>{t("p7WebhookColAttempts")}</th>
+                      <th>{t("p7WebhookColError")}</th>
+                      <th>{t("p7WebhookColTime")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {eventsRes.data.events.map((ev) => (
+                      <tr key={ev.id}>
+                        <td>
+                          <code>{ev.eventType}</code>
+                        </td>
+                        <td>
+                          <code>{ev.externalId}</code>
+                        </td>
+                        <td>
+                          <Status value={ev.status} />
+                        </td>
+                        <td className="number">{ev.attempts}</td>
+                        <td>{ev.lastErrorCode ? <code>{ev.lastErrorCode}</code> : "—"}</td>
+                        <td>{new Date(ev.createdAt).toLocaleString(locale)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </>
       ) : null}
       {action.notice && <Notice message={action.notice} error={action.failed} />}

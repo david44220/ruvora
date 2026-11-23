@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { evaluatePersistedPolicy } from "../domains/policy";
 import type { User } from "@prisma/client";
@@ -16,6 +17,34 @@ import { publicEvent } from "./events";
 import { listCampaigns } from "./campaigns";
 import { safeUrl } from "./validation";
 export { safeUrl } from "./validation";
+
+const optionalIsoDate = z
+  .union([z.iso.datetime(), z.literal(""), z.null()])
+  .optional()
+  .transform((v) => (v && v.length > 0 ? v : null));
+
+const customLinkSchema = z
+  .object({
+    id: z
+      .string()
+      .trim()
+      .regex(/^[a-zA-Z0-9_-]{3,40}$/)
+      .optional(),
+    title: z.string().trim().min(1).max(50),
+    url: safeUrl,
+    pinned: z.boolean().optional().default(false),
+    startsAt: optionalIsoDate,
+    endsAt: optionalIsoDate,
+  })
+  .strict()
+  .refine(
+    (link) =>
+      !link.startsAt ||
+      !link.endsAt ||
+      new Date(link.startsAt).getTime() < new Date(link.endsAt).getTime(),
+    "Link end time must be after start time.",
+  );
+
 const profileSchema = z
   .object({
     handle: z
@@ -31,6 +60,7 @@ const profileSchema = z
             "app",
             "billing",
             "events",
+            "explore",
             "forgot_password",
             "help",
             "login",
@@ -86,10 +116,7 @@ const profileSchema = z
       )
       .max(10)
       .default([]),
-    links: z
-      .array(z.object({ title: z.string().trim().min(1).max(50), url: safeUrl }).strict())
-      .max(12)
-      .default([]),
+    links: z.array(customLinkSchema).max(12).default([]),
   })
   .strict();
 export async function saveProfile(user: User, input: unknown) {
@@ -109,6 +136,17 @@ export async function saveProfile(user: User, input: unknown) {
       current.audienceStatus === "VERIFIED" &&
       nextFollowers <= current.followers &&
       nextFollowers >= 10;
+    const normalizedLinks = value.links.map((link) => {
+      const hasMeta = Boolean(link.id || link.pinned || link.startsAt || link.endsAt);
+      return {
+        ...(hasMeta ? { id: link.id || `lnk_${randomBytes(5).toString("hex")}` } : {}),
+        title: link.title,
+        url: link.url,
+        ...(link.pinned ? { pinned: true } : {}),
+        ...(link.startsAt ? { startsAt: link.startsAt } : {}),
+        ...(link.endsAt ? { endsAt: link.endsAt } : {}),
+      };
+    });
     const updated = await tx.user.update({
       where: { id: user.id },
       data: {
@@ -134,7 +172,7 @@ export async function saveProfile(user: User, input: unknown) {
         onboarded: true,
         roles,
         socialLinks: jsonValue(value.socials),
-        customLinks: jsonValue(value.links),
+        customLinks: jsonValue(normalizedLinks),
         followers: nextFollowers,
         audienceStatus: keepVerified ? "VERIFIED" : "SELF_DECLARED",
       },
@@ -331,13 +369,46 @@ export async function getPublicProfile(handle: string) {
         if (!(error instanceof AppError)) throw error;
       }
     }
+  const nowMs = Date.now();
+  const rawLinks = Array.isArray(user.customLinks)
+    ? (user.customLinks as {
+        id?: string;
+        title?: string;
+        url?: string;
+        pinned?: boolean;
+        startsAt?: string | null;
+        endsAt?: string | null;
+      }[])
+    : [];
+  const activeCustomLinks = rawLinks
+    .map((link, index) => ({
+      id: typeof link.id === "string" && link.id ? link.id : `legacy_${index}`,
+      title: typeof link.title === "string" ? link.title : "",
+      url: typeof link.url === "string" ? link.url : "",
+      pinned: Boolean(link.pinned),
+      startsAt: typeof link.startsAt === "string" && link.startsAt ? link.startsAt : null,
+      endsAt: typeof link.endsAt === "string" && link.endsAt ? link.endsAt : null,
+    }))
+    .filter((link) => {
+      if (!link.title || !link.url) return false;
+      if (link.startsAt && new Date(link.startsAt).getTime() > nowMs) return false;
+      if (link.endsAt && new Date(link.endsAt).getTime() < nowMs) return false;
+      return true;
+    })
+    .sort((a, b) => Number(b.pinned) - Number(a.pinned));
+
   return {
     entry,
     referralEntry,
     opportunities,
     showcase,
     trackedEvents,
-    profile: { ...user, xp, level: Math.floor(Math.sqrt(Math.max(0, xp) / 100)) + 1 },
+    profile: {
+      ...user,
+      customLinks: activeCustomLinks,
+      xp,
+      level: Math.floor(Math.sqrt(Math.max(0, xp) / 100)) + 1,
+    },
     events: events.map(publicEvent),
     campaigns: await db.campaign.findMany({
       where: { state: "ACTIVE", advertiserId: user.id },
@@ -353,6 +424,59 @@ export async function getPublicProfile(handle: string) {
       },
     }),
   };
+}
+
+const linkClickSchema = z
+  .object({
+    linkId: z.string().trim().min(1).max(60),
+  })
+  .strict();
+
+/**
+ * Strictly telemetry-only personal bio-link click counter.
+ * Creates ZERO Money, ZERO Reward Units, ZERO XP, and ZERO Event Points.
+ */
+export async function recordProfileLinkClick(handle: string, input: unknown) {
+  const normalized = handle.trim().toLowerCase().replace(/^@/, "");
+  const { linkId } = linkClickSchema.parse(input);
+  const user = await db.user.findUnique({
+    where: { handle: normalized },
+    select: { id: true, suspended: true, isDemo: true, customLinks: true },
+  });
+  assert(
+    user && !user.suspended && (isDevelopment() || !user.isDemo),
+    "PROFILE_NOT_FOUND",
+    "This profile is not available.",
+    404,
+  );
+  const rawLinks = Array.isArray(user.customLinks) ? (user.customLinks as { id?: string }[]) : [];
+  const validIds = new Set(
+    rawLinks.map((l, idx) => (typeof l?.id === "string" && l.id ? l.id : `legacy_${idx}`)),
+  );
+  assert(validIds.has(linkId), "LINK_NOT_FOUND", "Custom link not found.", 404);
+  await db.profileLinkClick.create({
+    data: {
+      userId: user.id,
+      linkId,
+      isDemo: user.isDemo,
+    },
+  });
+  return { recorded: true, linkId, economicEffect: "NONE" as const };
+}
+
+export async function getCreatorLinkClickStats(user: User) {
+  const grouped = await db.profileLinkClick.groupBy({
+    by: ["linkId"],
+    where: { userId: user.id },
+    _count: { _all: true },
+  });
+  const byLinkId: Record<string, number> = {};
+  let totalClicks = 0;
+  for (const row of grouped) {
+    byLinkId[row.linkId] = row._count._all;
+    totalClicks += row._count._all;
+  }
+  return { totalClicks, byLinkId };
 }
 
 export async function saveProfileModules(user: User, input: unknown) {

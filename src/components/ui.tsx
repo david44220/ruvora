@@ -47,11 +47,11 @@ export function PublicNav() {
       <div className="nav-inner">
         <Brand />
         <nav className={open ? "public-nav is-open" : "public-nav"} aria-label={t("menu")}>
+          <Link onClick={() => setOpen(false)} href="/explore">
+            {t("p7NavExplore")}
+          </Link>
           <Link onClick={() => setOpen(false)} href="/#creators">
             {t("navCreators")}
-          </Link>
-          <Link onClick={() => setOpen(false)} href="/#experience">
-            {t("navExperience")}
           </Link>
           <Link onClick={() => setOpen(false)} href="/events">
             {t("navEvents")}

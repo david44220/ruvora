@@ -16,6 +16,20 @@ export interface AbVariant {
   destinationUrl: string;
   weight?: number;
 }
+export interface CustomLink {
+  id?: string;
+  title: string;
+  url: string;
+  pinned?: boolean;
+  startsAt?: string | null;
+  endsAt?: string | null;
+  clicks?: number;
+}
+export interface SmartRouting {
+  iosUrl?: string;
+  androidUrl?: string;
+  localeUrls?: Partial<Record<"fr" | "en" | "es" | "de" | "it" | "pt", string>>;
+}
 export interface User {
   id: string;
   email: string;
@@ -37,7 +51,7 @@ export interface User {
   category: string | null;
   followers: number;
   socialLinks: { platform: string; url: string; followers: number }[];
-  customLinks: { title: string; url: string }[];
+  customLinks: CustomLink[];
   isDemo: boolean;
   economicHold: boolean;
   suspended?: boolean;
@@ -65,6 +79,9 @@ export interface Campaign {
   deliveryMode?: "OPEN" | "UGC_BRIEF";
   creativeBrief?: CreativeBrief | null;
   abVariants?: AbVariant[] | null;
+  smartRouting?: SmartRouting | null;
+  resolvedDestinationUrl?: string;
+  resolvedRouteTarget?: string;
   maxActivitiesPerCreator?: number | null;
   isTemplate?: boolean;
   budgetRemainingPct?: number;

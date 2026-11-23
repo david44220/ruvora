@@ -1,6 +1,6 @@
 import { z } from "zod";
-import type { User } from "@prisma/client";
-import { atomic, db, jsonValue } from "./db";
+import type { Campaign, User } from "@prisma/client";
+import { atomic, db, jsonValue, type Tx } from "./db";
 import { assert } from "./errors";
 import { requireRole } from "./auth";
 import { account, balance, postLedger } from "./ledger";
@@ -17,6 +17,7 @@ import { isDevelopment } from "./environment";
 import { notifyUser } from "./notifications";
 import { getCreatorReliability } from "./risk";
 import { resolveAdvertiserWorkspace } from "./workspaces";
+import { resolveSmartDestination } from "../lib/smart-routing";
 const positiveMinor = minor.refine((v) => v > 0n, "Amount must be positive.");
 export const idempotencyKey = z.string().regex(/^[a-zA-Z0-9:_-]{8,100}$/);
 export const reason = z.string().trim().min(10).max(500);
@@ -41,6 +42,23 @@ const abVariantSchema = z
     label: z.string().trim().min(1).max(60),
     destinationUrl: safeUrl,
     weight: z.number().int().min(1).max(100).default(50),
+  })
+  .strict();
+const smartRoutingSchema = z
+  .object({
+    iosUrl: safeUrl.optional(),
+    androidUrl: safeUrl.optional(),
+    localeUrls: z
+      .object({
+        fr: safeUrl.optional(),
+        en: safeUrl.optional(),
+        es: safeUrl.optional(),
+        de: safeUrl.optional(),
+        it: safeUrl.optional(),
+        pt: safeUrl.optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 const campaignSchema = z
@@ -80,11 +98,61 @@ const campaignSchema = z
     deliveryMode: z.enum(["OPEN", "UGC_BRIEF"]).default("OPEN"),
     creativeBrief: creativeBriefSchema.nullable().optional(),
     abVariants: z.array(abVariantSchema).max(4).nullable().optional(),
+    smartRouting: smartRoutingSchema.nullable().optional(),
     maxActivitiesPerCreator: z.number().int().min(1).max(500).nullable().optional(),
     isTemplate: z.boolean().default(false),
     frequencyCap: z.number().int().min(1).max(10).default(3),
   })
   .strict();
+
+async function notifyMatchingCreatorsForCampaign(tx: Tx, campaign: Campaign) {
+  const candidates = await tx.user.findMany({
+    where: {
+      roles: { has: "CREATOR" },
+      autoMonetize: true,
+      directoryOptIn: true,
+      onboarded: true,
+      suspended: false,
+      economicHold: false,
+      anonymizedAt: null,
+      id: { not: campaign.advertiserId },
+      ...(isDevelopment() ? {} : { isDemo: false }),
+    },
+    orderBy: { updatedAt: "desc" },
+    select: {
+      id: true,
+      roles: true,
+      followers: true,
+      category: true,
+      country: true,
+      city: true,
+      preferredLanguages: true,
+      socialLinks: true,
+      audienceStatus: true,
+      emailVerifiedAt: true,
+      suspended: true,
+      economicHold: true,
+    },
+    take: 50,
+  });
+  let notified = 0;
+  for (const creator of candidates) {
+    if (!canCreatorPromote(creator, campaign)) continue;
+    const score = campaignRelevanceScore(creator, campaign);
+    if (score < 60) continue;
+    await notifyUser(tx, {
+      userId: creator.id,
+      kind: "CAMPAIGN_MATCH",
+      titleKey: "p7NotifCampaignMatch",
+      bodyParams: { campaign: campaign.name, score: String(score) },
+      href: `/app/promote?campaign=${campaign.id}`,
+    });
+    notified += 1;
+    if (notified >= 25) break;
+  }
+  return notified;
+}
+
 export async function createCampaign(user: User, input: unknown, workspaceId?: string) {
   const ctx = await resolveAdvertiserWorkspace(user, workspaceId, "MANAGE_CAMPAIGNS");
   const ownerId = ctx.ownerId;
@@ -130,8 +198,19 @@ export async function createCampaign(user: User, input: unknown, workspaceId?: s
         "Linked campaigns must belong to an authorized event and fit its participation window.",
       );
     }
-    const { creativeBrief, abVariants, maximumCreatorFollowers, maxActivitiesPerCreator, ...rest } =
-      value;
+    const {
+      creativeBrief,
+      abVariants,
+      smartRouting,
+      maximumCreatorFollowers,
+      maxActivitiesPerCreator,
+      ...rest
+    } = value;
+    const hasSmartRouting =
+      smartRouting &&
+      (smartRouting.iosUrl ||
+        smartRouting.androidUrl ||
+        (smartRouting.localeUrls && Object.values(smartRouting.localeUrls).some(Boolean)));
     const campaign = await tx.campaign.create({
       data: {
         ...rest,
@@ -139,6 +218,7 @@ export async function createCampaign(user: User, input: unknown, workspaceId?: s
         maxActivitiesPerCreator: maxActivitiesPerCreator ?? null,
         ...(creativeBrief ? { creativeBrief: jsonValue(creativeBrief) } : {}),
         ...(abVariants && abVariants.length > 0 ? { abVariants: jsonValue(abVariants) } : {}),
+        ...(hasSmartRouting ? { smartRouting: jsonValue(smartRouting) } : {}),
         startAt,
         endAt,
         advertiserId: ownerId,
@@ -334,6 +414,9 @@ export async function submitCampaign(user: User, campaignId: string, workspaceId
         reviewReason: null,
       },
     });
+    if (updated.state === "ACTIVE") {
+      await notifyMatchingCreatorsForCampaign(tx, updated);
+    }
     await tx.auditLog.create({
       data: {
         actorId: user.id,
@@ -404,6 +487,9 @@ export async function reviewCampaign(admin: User, campaignId: string, input: unk
       bodyParams: { campaign: campaign.name },
       href: "/app/advertiser",
     });
+    if (value.decision === "APPROVE") {
+      await notifyMatchingCreatorsForCampaign(tx, updated);
+    }
     return { campaign: updated };
   });
 }
@@ -516,6 +602,7 @@ export async function duplicateCampaign(user: User, campaignId: string, workspac
         deliveryMode: source.deliveryMode,
         creativeBrief: source.creativeBrief ?? undefined,
         abVariants: source.abVariants ?? undefined,
+        smartRouting: source.smartRouting ?? undefined,
         isDemo: source.isDemo,
       },
     });
@@ -628,6 +715,8 @@ export async function listCampaigns(
     workspaceId?: string;
     cursor?: string;
     limit?: number;
+    userAgent?: string | null;
+    acceptLanguage?: string | null;
   } = {},
 ) {
   let activeWorkspaceOwnerId: string | null = null;
@@ -724,12 +813,20 @@ export async function listCampaigns(
       remainingMinor >= campaign.unitCostMinor &&
       campaign.advertiserId !== user?.id;
     const creatorPromoCode = promoMap.get(campaign.id) ?? null;
+    const resolved = resolveSmartDestination({
+      destinationUrl: campaign.destinationUrl,
+      smartRouting: campaign.smartRouting,
+      userAgent: options.userAgent,
+      acceptLanguage: options.acceptLanguage,
+    });
     if (
       (activeWorkspaceOwnerId && campaign.advertiserId === activeWorkspaceOwnerId) ||
       user?.roles.includes("ADMIN")
     )
       return {
         ...campaign,
+        resolvedDestinationUrl: resolved.url,
+        resolvedRouteTarget: resolved.routeTarget,
         remainingMinor,
         budgetRemainingPct,
         relevanceScore,
@@ -744,6 +841,9 @@ export async function listCampaigns(
       objective: campaign.objective,
       deliveryMode: campaign.deliveryMode,
       destinationUrl: campaign.destinationUrl,
+      smartRouting: campaign.smartRouting,
+      resolvedDestinationUrl: resolved.url,
+      resolvedRouteTarget: resolved.routeTarget,
       creativeBrief: campaign.creativeBrief,
       abVariants: campaign.abVariants,
       allowedCountries: campaign.allowedCountries,

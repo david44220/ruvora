@@ -55,4 +55,24 @@ outputs.push({
   height: 600,
   bytes: (await stat(cardPath)).size,
 });
+
+for (const icon of [
+  { name: "icon-192.png", size: 192 },
+  { name: "icon-512.png", size: 512 },
+  { name: "apple-touch-icon.png", size: 180 },
+]) {
+  const iconPath = resolve(root, "public", "assets", "pwa", icon.name);
+  await mkdir(dirname(iconPath), { recursive: true });
+  await sharp(resolve(masters, "ruvora-orb.png"))
+    .resize(icon.size, icon.size, { fit: "cover", position: "centre" })
+    .png({ compressionLevel: 9 })
+    .toFile(iconPath);
+  outputs.push({
+    file: `public/assets/pwa/${icon.name}`,
+    width: icon.size,
+    height: icon.size,
+    bytes: (await stat(iconPath)).size,
+  });
+}
+
 console.log(JSON.stringify(outputs, null, 2));

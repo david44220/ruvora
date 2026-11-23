@@ -2,11 +2,13 @@ import { pass02en, pass02fr } from "./pass02";
 import { pass04en, pass04fr } from "./pass04";
 import { pass05 } from "./pass05";
 import { pass06 } from "./pass06";
+import { pass07 } from "./pass07";
 export const en = {
   ...pass02en,
   ...pass04en,
   ...pass05.en,
   ...pass06.en,
+  ...pass07.en,
   addSocial: "Add a social profile",
   addLink: "Add a link",
   remove: "Remove",
@@ -320,6 +322,7 @@ export const fr: Record<MessageKey, string> = {
   ...pass04fr,
   ...pass05.fr,
   ...pass06.fr,
+  ...pass07.fr,
   addSocial: "Ajouter un profil social",
   addLink: "Ajouter un lien",
   remove: "Supprimer",

@@ -164,6 +164,7 @@ export async function receiveWebhook(
             payload: jsonValue(value.data),
             payloadHash: hash,
             occurredAt,
+            advertiserId: inferredWorkspaceId,
             isDemo: config.development,
           },
         });

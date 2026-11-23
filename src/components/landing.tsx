@@ -112,7 +112,7 @@ export default function Landing() {
             <p className="hero-description">{t("heroDescription")}</p>
             <div className="hero-actions">
               <ButtonLink href="/register">{t("getLink")}</ButtonLink>
-              <Link className="text-link" href="/#experience">
+              <Link className="text-link" href="/explore">
                 {t("explore")}
                 <ArrowUpRight size={17} />
               </Link>

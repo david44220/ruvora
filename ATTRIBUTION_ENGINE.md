@@ -54,3 +54,10 @@ Migration `202611220010_pass06_social_promotion` adds `socialChannel` (default `
 - `startAttribution` copies `ShareLink.socialChannel` immutably onto `AttributionContext` and every associated `GrowthEvent` (`PROFILE_VIEW`, `SHARE_VISIT`, `ATTRIBUTED_SESSION`, `CAMPAIGN_START`, `REGISTRATION`, `EVENT_JOIN`) without altering `Activity.attributionSnapshot` or weakening existing provenance guards.
 - `POST /api/promote/track-share` records deduplicated daily `SOCIAL_KIT_SHARED` telemetry events strictly for observability and XP-only social quests; sharing alone never mints Money, RU, or Event Points.
 - Creator analytics (`byChannel`) and advertiser analytics (`bySocialChannel`) aggregate visits, attributed sessions, registrations, validated actions, conversion rates, and persisted CREATOR RU per social network.
+
+## Pass 07 smart destination routing & bio-link click telemetry
+
+Migration `202611230011_pass07_mobile_explore_conversion` adds optional `Campaign.smartRouting` (`{ iosUrl?, androidUrl?, localeUrls? }`, every URL strictly SSRF-validated via `safeUrl`), `WebhookEvent.advertiserId`, and telemetry table `ProfileLinkClick`.
+
+- On `/go/[slug]` and `GET /api/campaigns`, `resolveSmartDestination()` (`src/lib/smart-routing.ts`) selects the destination URL in strict priority order: assigned A/B split-test variant → iOS / Android device rule → `Accept-Language` rule → default `destinationUrl`. `AttributionContext` provenance, `HttpOnly` cookies, and `Activity.attributionSnapshot` remain completely unchanged.
+- `POST /api/profiles/[handle]/link-click` records rate-limited `ProfileLinkClick` rows strictly for creator observability (`GET /api/profiles/link-clicks`); clicks on personal bio-links create zero Money, zero RU, zero XP, and zero Event Points, and are covered by GDPR Article 20 export and Article 17 anonymization.
