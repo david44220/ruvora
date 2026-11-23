@@ -130,7 +130,7 @@ ALLOW_ADMIN_PROVISION=true PROVISION_ADMIN_EMAIL=... PROVISION_ADMIN_PASSWORD=..
 - `pnpm lint` (`eslint . --max-warnings 0`) — **PASS (0 warnings, 0 errors)**
 - `pnpm typecheck` (`prisma generate && next typegen && tsc --noEmit`) — **PASS**
 - `pnpm audit --prod --audit-level=high` — **PASS (0 production vulnerabilities)**
-- `APP_URL=http://localhost:3000 pnpm test` (Vitest unit) — **19/19 files, 312/312 tests PASS**
+- `APP_URL=http://localhost:3000 pnpm test` (Vitest unit) — **19/19 files, 313/313 tests PASS**
 - `DATABASE_URL="$TEST_DATABASE_URL" pnpm test:integration` (isolated PostgreSQL 18.4 `ruvora_test`) — **12/12 files, 99/99 tests PASS**
 - `pnpm build` (Next.js 16.4.6 Turbopack standalone + `src/proxy.ts` + `/c/[handle]/[slug]` + `/r/[handle]` + `/share-card/[kind]/[slug]`) — **PASS**
 - `pnpm worker:once` (advisory-locked outbox + weekly digest processing) — **PASS**

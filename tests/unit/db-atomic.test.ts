@@ -104,4 +104,22 @@ describe("Serializable retry error identity", () => {
     await expect(atomic(vi.fn())).rejects.toBe(failures[4]);
     expect(mocks.transaction).toHaveBeenCalledTimes(5);
   });
+  it("retries direct Prisma 7 DriverAdapterError on 40001 TransactionWriteConflict only", async () => {
+    const conflict = Object.assign(new Error("TransactionWriteConflict"), {
+      name: "DriverAdapterError",
+      cause: { kind: "TransactionWriteConflict", originalCode: "40001" },
+    });
+    mocks.transaction.mockRejectedValueOnce(conflict).mockResolvedValueOnce("committed");
+    expect(await atomic(vi.fn())).toBe("committed");
+    expect(mocks.transaction).toHaveBeenCalledTimes(2);
+
+    vi.resetAllMocks();
+    const nonRetryable = Object.assign(new Error("UniqueConstraintViolation"), {
+      name: "DriverAdapterError",
+      cause: { kind: "UniqueConstraintViolation", originalCode: "23505" },
+    });
+    mocks.transaction.mockRejectedValueOnce(nonRetryable);
+    await expect(atomic(vi.fn())).rejects.toBe(nonRetryable);
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+  });
 });
