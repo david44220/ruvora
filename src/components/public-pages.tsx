@@ -4,9 +4,11 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowUpRight,
+  Award,
   BadgeCheck,
   Copy,
   FileText,
+  Flame,
   Link2,
   Pin,
   Trophy,
@@ -67,6 +69,8 @@ export interface PublicProfileData {
     isDemo: boolean;
     level: number;
     xp: number;
+    streakWeeks?: number;
+    badges?: { code: string; labelKey: MessageKey }[];
   };
   events: RuvoraEvent[];
 }
@@ -154,7 +158,23 @@ export function PublicProfile({
                     {t("p4AudienceVerifiedBadge")}
                   </span>
                 )}
+                {typeof p.streakWeeks === "number" && p.streakWeeks > 0 && (
+                  <span className="tag tag-verified">
+                    <Flame size={13} />
+                    {p.streakWeeks} {t("p8StreakWeekUnit")}
+                  </span>
+                )}
               </div>
+              {p.badges && p.badges.length > 0 && (
+                <div className="profile-badge-row" aria-label={t("p8BadgesHeading")}>
+                  {p.badges.map((badge) => (
+                    <span key={badge.code} className="tag">
+                      <Award size={12} />
+                      {t(badge.labelKey)}
+                    </span>
+                  ))}
+                </div>
+              )}
               <div className="profile-mediakit-bar">
                 <a className="text-link" href={`/api/media-kit/${encodeURIComponent(p.handle)}`}>
                   <FileText size={14} />

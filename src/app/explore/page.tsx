@@ -16,7 +16,14 @@ export async function generateMetadata(): Promise<Metadata> {
     openGraph: {
       title: `${m.p7NavExplore} · Ruvora`,
       description: m.p7ExploreSubtitle,
+      url: "/explore",
       images: [{ url: "/assets/share/ruvora-home.webp", width: 1200, height: 630 }],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: `${m.p7NavExplore} · Ruvora`,
+      description: m.p7ExploreSubtitle,
+      images: ["/assets/share/ruvora-home.webp"],
     },
   };
 }

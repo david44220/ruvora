@@ -65,6 +65,7 @@ const profileSchema = z
             "help",
             "login",
             "moderator",
+            "offers",
             "official",
             "onboarding",
             "privacy",
@@ -95,6 +96,7 @@ const profileSchema = z
       .optional(),
     autoMonetize: z.boolean().optional(),
     directoryOptIn: z.boolean().optional(),
+    leaderboardOptIn: z.boolean().optional(),
     billingEntityName: z.string().trim().max(120).optional(),
     vatNumber: z.string().trim().max(40).optional(),
     profileTheme: z.enum(["obsidian", "champagne", "emerald-dusk", "amber-glow"]).optional(),
@@ -162,6 +164,9 @@ export async function saveProfile(user: User, input: unknown) {
           : {}),
         ...(value.autoMonetize !== undefined ? { autoMonetize: value.autoMonetize } : {}),
         ...(value.directoryOptIn !== undefined ? { directoryOptIn: value.directoryOptIn } : {}),
+        ...(value.leaderboardOptIn !== undefined
+          ? { leaderboardOptIn: value.leaderboardOptIn }
+          : {}),
         ...(value.billingEntityName !== undefined
           ? { billingEntityName: value.billingEntityName || null }
           : {}),
@@ -234,11 +239,6 @@ export async function getPublicProfile(handle: string) {
     "This profile is not available.",
     404,
   );
-  const [activityXp, questXp] = await Promise.all([
-    db.xpEntry.aggregate({ where: { userId: user.id }, _sum: { amount: true } }),
-    db.questClaim.aggregate({ where: { userId: user.id }, _sum: { xpAwarded: true } }),
-  ]);
-  const xp = (activityXp._sum.amount ?? 0) + (questXp._sum.xpAwarded ?? 0);
   let entry: { slug: string; url: string } | null = null;
   let referralEntry: { slug: string; url: string } | null = null;
   const opportunities: {
@@ -397,6 +397,9 @@ export async function getPublicProfile(handle: string) {
     })
     .sort((a, b) => Number(b.pinned) - Number(a.pinned));
 
+  const { getCreatorRetentionSummary } = await import("./retention");
+  const retention = await getCreatorRetentionSummary(user.id);
+
   return {
     entry,
     referralEntry,
@@ -406,8 +409,10 @@ export async function getPublicProfile(handle: string) {
     profile: {
       ...user,
       customLinks: activeCustomLinks,
-      xp,
-      level: Math.floor(Math.sqrt(Math.max(0, xp) / 100)) + 1,
+      xp: retention.totalXp,
+      level: retention.level,
+      streakWeeks: retention.streak.currentStreakWeeks,
+      badges: retention.badges,
     },
     events: events.map(publicEvent),
     campaigns: await db.campaign.findMany({

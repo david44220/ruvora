@@ -433,3 +433,200 @@ export async function generateCreatorMediaKitPdf(handle: string) {
     buffer: buildPdfDocument(`Creator Media Kit - @${user.handle}`, lines),
   };
 }
+
+/**
+ * Generates a printable 1-page Creative Brief & Brand Pack PDF 1.4 for an active campaign
+ * (or any campaign owned by the authenticated advertiser/workspace/admin).
+ * Strictly excludes internal advertiser balances, escrow figures, and private review notes.
+ */
+export async function generateCampaignBriefPdf(
+  campaignId: string,
+  requester: User | null,
+  locale: "en" | "fr" = "en",
+): Promise<{ filename: string; buffer: Buffer }> {
+  const dev = isDevelopment();
+  const now = new Date();
+  const campaign = await db.campaign.findUnique({
+    where: { id: campaignId },
+    include: { advertiser: { select: { id: true, displayName: true } } },
+  });
+
+  const isOwnerOrAdmin = Boolean(
+    requester &&
+    campaign &&
+    (requester.roles.includes("ADMIN") || requester.id === campaign.advertiserId),
+  );
+  const isPublicActive = Boolean(
+    campaign &&
+    campaign.state === "ACTIVE" &&
+    campaign.startAt <= now &&
+    campaign.endAt > now &&
+    (dev || !campaign.isDemo),
+  );
+
+  assert(
+    campaign && (isPublicActive || isOwnerOrAdmin),
+    "CAMPAIGN_INACTIVE",
+    "This campaign brief is unavailable.",
+    404,
+  );
+
+  const raw = (campaign.creativeBrief as Record<string, unknown> | null) ?? {};
+  const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+  const arr = (v: unknown) =>
+    Array.isArray(v)
+      ? v
+          .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+          .map((x) => x.trim())
+      : [];
+
+  const headline = str(raw.headline);
+  const talkingPoints = arr(raw.talkingPoints);
+  const hashtags = arr(raw.hashtags);
+  const cta = str(raw.cta);
+  const disclosureNote = str(raw.disclosureNote);
+  const suggestedHooks = arr(raw.suggestedHooks);
+  const dos = arr(raw.dos);
+  const donts = arr(raw.donts);
+  const brandTone = str(raw.brandTone);
+  const colorPalette = arr(raw.colorPalette).filter((c) => /^#[0-9a-fA-F]{6}$/.test(c));
+  const assetUrls = arr(raw.assetUrls);
+
+  const isFr = locale === "fr";
+  const lines: PdfLine[] = [];
+  if (dev || campaign.isDemo) {
+    lines.push({
+      text: isFr
+        ? "CAMPAGNE DE DEMONSTRATION - ENVIRONNEMENT DE DEVELOPPEMENT"
+        : "DEVELOPMENT CAMPAIGN - DEMONSTRATION CREATIVE BRIEF",
+      size: 10,
+      bold: true,
+    });
+  }
+  lines.push(
+    { text: campaign.name, size: 15, bold: true, gapBefore: 6 },
+    {
+      text: `${isFr ? "Annonceur" : "Advertiser"}: ${campaign.advertiser.displayName} | ${isFr ? "Objectif" : "Objective"}: ${campaign.objective} | Mode: ${campaign.deliveryMode}`,
+      size: 10,
+    },
+  );
+  if (headline) {
+    lines.push({
+      text: `${isFr ? "Angle principal" : "Headline"}: ${headline.slice(0, 120)}`,
+      size: 10,
+      bold: true,
+      gapBefore: 6,
+    });
+  }
+  if (campaign.description) {
+    lines.push({ text: campaign.description.slice(0, 150), size: 9, gapBefore: 3 });
+  }
+  if (brandTone || colorPalette.length > 0) {
+    lines.push({
+      text: isFr ? "Identite & Tonalite" : "Brand Voice & Palette",
+      size: 11,
+      bold: true,
+      gapBefore: 10,
+    });
+    if (brandTone) lines.push({ text: `${isFr ? "Tonalite" : "Tone"}: ${brandTone}`, size: 9 });
+    if (colorPalette.length > 0) {
+      lines.push({
+        text: `${isFr ? "Palette" : "Palette"}: ${colorPalette.join("  ")}`,
+        size: 9,
+      });
+    }
+  }
+  if (talkingPoints.length > 0) {
+    lines.push({
+      text: isFr ? "Points cles a mentionner" : "Key Talking Points",
+      size: 11,
+      bold: true,
+      gapBefore: 10,
+    });
+    for (const pt of talkingPoints.slice(0, 5)) {
+      lines.push({ text: `- ${pt.slice(0, 110)}`, size: 9 });
+    }
+  }
+  if (suggestedHooks.length > 0) {
+    lines.push({
+      text: isFr ? "Accroches suggerees (Story / Reels / TikTok)" : "Suggested Hooks",
+      size: 11,
+      bold: true,
+      gapBefore: 10,
+    });
+    for (const hk of suggestedHooks.slice(0, 3)) {
+      lines.push({ text: `- "${hk.slice(0, 108)}"`, size: 9 });
+    }
+  }
+  if (dos.length > 0) {
+    lines.push({
+      text: isFr ? "A faire (Do's)" : "Recommended (Do's)",
+      size: 11,
+      bold: true,
+      gapBefore: 10,
+    });
+    for (const item of dos.slice(0, 4)) {
+      lines.push({ text: `[+] ${item.slice(0, 108)}`, size: 9 });
+    }
+  }
+  if (donts.length > 0) {
+    lines.push({
+      text: isFr ? "A eviter (Don'ts)" : "Avoid (Don'ts)",
+      size: 11,
+      bold: true,
+      gapBefore: 8,
+    });
+    for (const item of donts.slice(0, 4)) {
+      lines.push({ text: `[-] ${item.slice(0, 108)}`, size: 9 });
+    }
+  }
+  if (cta || hashtags.length > 0 || disclosureNote) {
+    lines.push({
+      text: isFr ? "Appel a l'action & Transparence commerciale" : "CTA & Commercial Disclosure",
+      size: 11,
+      bold: true,
+      gapBefore: 10,
+    });
+    if (cta) lines.push({ text: `CTA: ${cta}`, size: 9 });
+    if (hashtags.length > 0) lines.push({ text: `Hashtags: ${hashtags.join(" ")}`, size: 9 });
+    lines.push({
+      text: `${isFr ? "Mention obligatoire" : "Required disclosure"}: ${disclosureNote || (isFr ? "#collaboration #lienpartenaire" : "#ad #partnerlink")}`,
+      size: 9,
+      bold: true,
+    });
+  }
+  if (assetUrls.length > 0) {
+    lines.push({
+      text: isFr ? "Ressources approuvees" : "Approved Asset URLs",
+      size: 11,
+      bold: true,
+      gapBefore: 8,
+    });
+    for (const u of assetUrls.slice(0, 4)) {
+      lines.push({ text: `- ${u.slice(0, 92)}`, size: 8 });
+    }
+  }
+
+  lines.push({
+    text: isFr
+      ? "Conformite Ruvora : attribution via /go/[slug] uniquement, validation independante, aucune garantie de gains."
+      : "Ruvora Compliance: server-tracked /go/[slug] attribution only, independent validation, no guaranteed income.",
+    size: 8,
+    gapBefore: 12,
+  });
+
+  const safeSlug =
+    campaign.name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 32) || campaign.id.slice(0, 12);
+
+  return {
+    filename: `ruvora-brief-${safeSlug}.pdf`,
+    buffer: buildPdfDocument(
+      `${isFr ? "Brief Creatif" : "Creative Brief"} - ${campaign.name.slice(0, 48)}`,
+      lines,
+    ),
+  };
+}

@@ -56,6 +56,7 @@ import {
   startAttribution,
   bindAttribution,
   createShareLink,
+  customizeShareLink,
 } from "./attribution";
 import { getCreatorAnalytics, getAdvertiserAnalytics, getGrowthAnalytics } from "./analytics";
 import { createEventSettlementPreview, finalizeEventSettlement } from "./event-settlement";
@@ -133,6 +134,18 @@ import {
   upsertShowcaseItem,
 } from "./social-promote";
 import { getExploreMarketplace } from "./explore";
+import { getPublicCampaignOffer } from "./offers";
+import {
+  createPostPlan,
+  deletePostPlan,
+  getNotificationPreferences,
+  getPostPlanIcs,
+  getPublicOptInLeaderboard,
+  listPostPlans,
+  queueWeeklyDigestForUser,
+  updateNotificationPreferences,
+  updatePostPlan,
+} from "./retention";
 export async function readJson(request: Request): Promise<unknown> {
   assert(
     request.headers.get("content-type")?.split(";")[0] === "application/json",
@@ -301,12 +314,33 @@ export async function handleApi(request: NextRequest, path: string[]) {
           requestId,
         );
       if (route === "quests") return response(await listQuests(await requireUser()), requestId);
+      if (path[0] === "offers" && path.length === 2)
+        return response(await getPublicCampaignOffer(path[1]!), requestId);
+      if (route === "leaderboard")
+        return response({ entries: await getPublicOptInLeaderboard() }, requestId);
       if (route === "promote/hub")
         return response(await getPromoteHub(await requireUser()), requestId);
+      if (route === "promote/plans")
+        return response(await listPostPlans(await requireUser()), requestId);
+      if (path[0] === "promote" && path[1] === "plans" && path.length === 4 && path[3] === "ics") {
+        const ics = await getPostPlanIcs(await requireUser(), path[2]!);
+        return new NextResponse(ics.content, {
+          status: 200,
+          headers: {
+            "content-type": "text/calendar; charset=utf-8",
+            "content-disposition": `attachment; filename="${ics.filename}"`,
+            "cache-control": "no-store",
+            "x-content-type-options": "nosniff",
+            "x-request-id": requestId,
+          },
+        });
+      }
       if (route === "referrals/funnel")
         return response(await getReferralFunnel(await requireUser()), requestId);
       if (route === "notifications")
         return response(await listNotifications(await requireUser(), { cursor, limit }), requestId);
+      if (route === "notifications/preferences")
+        return response(await getNotificationPreferences(await requireUser()), requestId);
       if (route === "promo-codes")
         return response(await listCreatorPromoCodes(await requireUser()), requestId);
       if (route === "advertiser/integrations")
@@ -500,6 +534,10 @@ export async function handleApi(request: NextRequest, path: string[]) {
       if (path[0] === "admin" && path[1] === "webhooks" && path.length === 4 && path[3] === "retry")
         return response(await retryWebhook(user, sessionToken, path[2]!, input), requestId);
       if (route === "shares") return response(await createShareLink(user, input), requestId, 201);
+      if (route === "share-links/customize") {
+        await limitRate("share-customize", user.id, 30, 900);
+        return response(await customizeShareLink(user, input), requestId);
+      }
       if (route === "promote/quickstart")
         return response(await quickStartPromote(user, input), requestId);
       if (route === "promote/showcase")
@@ -508,6 +546,12 @@ export async function handleApi(request: NextRequest, path: string[]) {
         return response(await removeShowcaseItem(user, input), requestId);
       if (route === "promote/track-share")
         return response(await recordSocialShareTelemetry(user, input), requestId);
+      if (route === "promote/plans")
+        return response(await createPostPlan(user, input), requestId, 201);
+      if (path[0] === "promote" && path[1] === "plans" && path.length === 4 && path[3] === "update")
+        return response(await updatePostPlan(user, path[2]!, input), requestId);
+      if (path[0] === "promote" && path[1] === "plans" && path.length === 4 && path[3] === "delete")
+        return response(await deletePostPlan(user, path[2]!), requestId);
       if (route === "profile/modules")
         return response(await saveProfileModules(user, input), requestId);
       if (route === "profile/audience/begin")
@@ -517,6 +561,15 @@ export async function handleApi(request: NextRequest, path: string[]) {
       if (route === "quests/claim") return response(await claimQuest(user, input), requestId);
       if (route === "notifications/read")
         return response(await markNotificationsRead(user, input), requestId);
+      if (route === "notifications/preferences")
+        return response(await updateNotificationPreferences(user, input), requestId);
+      if (route === "notifications/digest") {
+        await limitRate("weekly-digest-manual", user.id, 10, 3600);
+        return response(
+          await queueWeeklyDigestForUser(user, { bypassCooldownInDev: true }),
+          requestId,
+        );
+      }
       if (route === "promo-codes")
         return response(await createPromoCode(user, input), requestId, 201);
       if (route === "campaigns/estimate")

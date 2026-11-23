@@ -13,6 +13,7 @@ import { balance } from "./ledger";
 import { isDevelopment } from "./environment";
 import { SOCIAL_CHANNELS, type SocialChannel } from "../lib/social-channels";
 import { resolveSmartDestination } from "../lib/smart-routing";
+import { isShareSlug, isVanityShareSlug } from "../lib/share-recovery";
 
 const socialChannelSchema = z.enum(SOCIAL_CHANNELS).default("DIRECT");
 
@@ -28,7 +29,7 @@ export const attributionTokenHash = (token: string) =>
   createHash("sha256").update(token).digest("hex");
 const opaque = () => randomBytes(32).toString("base64url");
 const tokenPattern = /^[A-Za-z0-9_-]{43}$/;
-const publicSlug = z.string().regex(/^[A-Za-z0-9_-]{24}$/);
+const publicSlug = z.string().refine(isShareSlug, "Invalid share link.");
 
 async function eligibleCreator(tx: Tx, id: string, campaign?: Campaign) {
   const creator = await tx.user.findUnique({ where: { id } });
@@ -356,8 +357,8 @@ export async function startAttribution(
 ) {
   const slug = publicSlug.parse(entrySlug);
   return atomic(async (tx) => {
-    const entry = await tx.shareLink.findUnique({
-      where: { slug },
+    const entry = await tx.shareLink.findFirst({
+      where: { OR: [{ slug }, { customSlug: slug }] },
       include: { campaign: true, event: true, creator: true, owner: true },
     });
     assert(
@@ -569,6 +570,9 @@ export function pickCampaignAbVariant(
 }
 function destination(
   entry: {
+    slug: string;
+    customSlug?: string | null;
+    bridgeEnabled?: boolean;
     source: string;
     campaignId: string | null;
     campaign?: { destinationUrl: string; smartRouting: unknown; abVariants: unknown } | null;
@@ -580,6 +584,9 @@ function destination(
 ) {
   if (entry.source === "REFERRAL") return "/register";
   if (entry.campaignId) {
+    if (entry.bridgeEnabled && entry.campaign) {
+      return `/go-card/${encodeURIComponent(entry.customSlug || entry.slug)}`;
+    }
     const params = new URLSearchParams({ campaign: entry.campaignId });
     if (abVariantId) params.set("variant", abVariantId);
     if (entry.campaign?.smartRouting && routingHints) {
@@ -599,6 +606,97 @@ function destination(
   }
   if (entry.event) return `/events/${encodeURIComponent(entry.event.slug)}`;
   return entry.creator?.handle ? `/@${entry.creator.handle}` : "/";
+}
+
+const customizeShareLinkSchema = z
+  .object({
+    shareLinkId: z.string().min(4).max(100),
+    customSlug: z.string().trim().toLowerCase().max(40).nullable().optional(),
+    bridgeEnabled: z.boolean().optional(),
+  })
+  .strict();
+
+/**
+ * Allows the owner of an active ShareLink to assign a memorable kebab-case vanity slug
+ * and/or enable the 1-tap Mobile Offer Bridge Card (campaign links only).
+ * Never alters canonicalKey, attribution provenance, or economic balances.
+ */
+export async function customizeShareLink(user: User, input: unknown) {
+  const value = customizeShareLinkSchema.parse(input);
+  return atomic(async (tx) => {
+    const entry = await tx.shareLink.findUnique({ where: { id: value.shareLinkId } });
+    assert(
+      entry && entry.ownerId === user.id && entry.active,
+      "NOT_FOUND",
+      "Share link not found.",
+      404,
+    );
+
+    let nextCustomSlug: string | null | undefined = undefined;
+    if (value.customSlug !== undefined) {
+      const cleaned = value.customSlug ? value.customSlug.trim().toLowerCase() : "";
+      if (cleaned === "") {
+        nextCustomSlug = null;
+      } else {
+        assert(
+          isVanityShareSlug(cleaned),
+          "VANITY_SLUG_INVALID",
+          "Custom short slugs must use 5-40 lowercase letters/digits with at least one hyphen.",
+          400,
+        );
+        const collision = await tx.shareLink.findFirst({
+          where: {
+            OR: [{ slug: cleaned }, { customSlug: cleaned }],
+            id: { not: entry.id },
+          },
+          select: { id: true },
+        });
+        assert(!collision, "VANITY_SLUG_TAKEN", "This custom short slug is already taken.", 409);
+        nextCustomSlug = cleaned;
+      }
+    }
+
+    if (value.bridgeEnabled === true) {
+      assert(
+        Boolean(entry.campaignId),
+        "BRIDGE_CAMPAIGN_ONLY",
+        "The Mobile Offer Bridge Card can only be enabled on campaign share links.",
+        400,
+      );
+    }
+
+    const updated = await tx.shareLink.update({
+      where: { id: entry.id },
+      data: {
+        ...(nextCustomSlug !== undefined ? { customSlug: nextCustomSlug } : {}),
+        ...(value.bridgeEnabled !== undefined ? { bridgeEnabled: value.bridgeEnabled } : {}),
+      },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        actorId: user.id,
+        action: "SHARE_LINK_CUSTOMIZED",
+        targetId: updated.id,
+        details: {
+          customSlug: updated.customSlug,
+          bridgeEnabled: updated.bridgeEnabled,
+          currencyImpact: "NONE",
+        },
+      },
+    });
+
+    return {
+      shareLink: {
+        id: updated.id,
+        slug: updated.slug,
+        customSlug: updated.customSlug,
+        url: `/go/${updated.slug}`,
+        customUrl: updated.customSlug ? `/go/${updated.customSlug}` : null,
+        bridgeEnabled: updated.bridgeEnabled,
+      },
+    };
+  });
 }
 export async function bindAttribution(
   user: User,

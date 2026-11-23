@@ -76,6 +76,20 @@ export const QUEST_DEFINITIONS: readonly QuestDefinition[] = [
     descriptionKey: "p6QuestFirstReferralDesc",
     href: "/app/referrals",
   },
+  {
+    code: "FIRST_POST_PLAN",
+    xpAwarded: 50,
+    titleKey: "p8QuestFirstPostPlanTitle",
+    descriptionKey: "p8QuestFirstPostPlanDesc",
+    href: "/app/promote",
+  },
+  {
+    code: "CONSISTENT_PROMOTER",
+    xpAwarded: 100,
+    titleKey: "p8QuestConsistentPromoterTitle",
+    descriptionKey: "p8QuestConsistentPromoterDesc",
+    href: "/app/promote",
+  },
 ] as const;
 
 export interface QuestFacts {
@@ -91,6 +105,8 @@ export interface QuestFacts {
   referralsSent: number;
   socialShareChannels?: number;
   showcasePinnedCount?: number;
+  postPlansCount?: number;
+  publishedPostPlansCount?: number;
 }
 
 export function evaluateQuestCompletion(code: string, facts: QuestFacts): boolean {
@@ -115,6 +131,13 @@ export function evaluateQuestCompletion(code: string, facts: QuestFacts): boolea
       return (facts.socialShareChannels ?? 0) >= 2 || (facts.showcasePinnedCount ?? 0) >= 1;
     case "FIRST_REFERRAL_INVITE":
       return facts.referralsSent >= 1;
+    case "FIRST_POST_PLAN":
+      return (facts.postPlansCount ?? 0) >= 1;
+    case "CONSISTENT_PROMOTER":
+      return (
+        ((facts.publishedPostPlansCount ?? 0) >= 1 && (facts.socialShareChannels ?? 0) >= 1) ||
+        (facts.publishedPostPlansCount ?? 0) >= 2
+      );
     default:
       return false;
   }
@@ -129,6 +152,8 @@ async function gatherQuestFacts(client: PrismaClient | Tx, userId: string): Prom
     socialLinksShared,
     kitShareEvents,
     showcasePinnedCount,
+    postPlansCount,
+    publishedPostPlansCount,
   ] = await Promise.all([
     client.user.findUniqueOrThrow({ where: { id: userId } }),
     client.activity.count({ where: { userId, state: "VALIDATED" } }),
@@ -145,6 +170,8 @@ async function gatherQuestFacts(client: PrismaClient | Tx, userId: string): Prom
       distinct: ["socialChannel"],
     }),
     client.creatorShowcaseItem.count({ where: { creatorId: userId, pinned: true } }),
+    client.creatorPostPlan.count({ where: { userId } }),
+    client.creatorPostPlan.count({ where: { userId, status: "PUBLISHED" } }),
   ]);
   const socials = Array.isArray(fresh.socialLinks) ? fresh.socialLinks : [];
   const distinctChannels = new Set([
@@ -164,6 +191,8 @@ async function gatherQuestFacts(client: PrismaClient | Tx, userId: string): Prom
     referralsSent,
     socialShareChannels: distinctChannels.size,
     showcasePinnedCount,
+    postPlansCount,
+    publishedPostPlansCount,
   };
 }
 

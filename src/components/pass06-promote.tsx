@@ -31,6 +31,13 @@ import {
 import { Empty, Eyebrow, Loading, Notice } from "./ui";
 import { PageTitle, Stat } from "./workspace-ui";
 import { PromoQrBox } from "./pass04-creator";
+import {
+  SocialPostPlannerPanel,
+  StreakBadgesMilestonePanel,
+  VanityLinkCard,
+  type CreatorPostPlanItem,
+  type CreatorRetentionData,
+} from "./pass08-retention";
 
 interface PromoteCampaignItem {
   id: string;
@@ -48,7 +55,10 @@ interface PromoteCampaignItem {
 interface PromoteShareLink {
   id: string;
   slug: string;
+  customSlug?: string | null;
   url: string;
+  customUrl?: string | null;
+  bridgeEnabled?: boolean;
   source: string;
   socialChannel: string;
   campaignId: string | null;
@@ -106,6 +116,8 @@ interface PromoteHubData {
   showcase: ShowcaseEntry[];
   channelAnalytics: ChannelMetric[];
   referralFunnel: ReferralFunnelData;
+  retention?: CreatorRetentionData;
+  postPlans?: CreatorPostPlanItem[];
 }
 
 const PLATFORMS = [
@@ -169,31 +181,48 @@ export function PromoteHubScreen({ onProfileUpdated }: { onProfileUpdated?: () =
 
   const activeLinkKey = `${target}::${channel}`;
 
+  const activeShareLinkObj = useMemo(() => {
+    if (!hub) return null;
+    if (target === "PROFILE") {
+      return (
+        hub.shareLinks.find((l) => l.source === "CREATOR_PROFILE" && l.socialChannel === channel) ??
+        hub.shareLinks.find((l) => l.source === "CREATOR_PROFILE") ??
+        null
+      );
+    }
+    if (target === "REFERRAL") {
+      return (
+        hub.shareLinks.find((l) => l.source === "REFERRAL" && l.socialChannel === channel) ??
+        hub.shareLinks.find((l) => l.source === "REFERRAL") ??
+        null
+      );
+    }
+    if (activeCampaign) {
+      return (
+        hub.shareLinks.find(
+          (l) => l.campaignId === activeCampaign.id && l.socialChannel === channel,
+        ) ??
+        hub.shareLinks.find((l) => l.campaignId === activeCampaign.id) ??
+        null
+      );
+    }
+    return null;
+  }, [hub, target, channel, activeCampaign]);
+
   const resolvedRelativeUrl = useMemo(() => {
     if (generatedUrls[activeLinkKey]) return generatedUrls[activeLinkKey]!;
     if (!hub) return "";
+    if (activeShareLinkObj) {
+      return activeShareLinkObj.customUrl || activeShareLinkObj.url;
+    }
     if (target === "PROFILE") {
-      const match = hub.shareLinks.find(
-        (l) => l.source === "CREATOR_PROFILE" && l.socialChannel === channel,
-      );
-      return match?.url ?? hub.profileEntry?.url ?? (hub.user.handle ? `/@${hub.user.handle}` : "");
+      return hub.profileEntry?.url ?? (hub.user.handle ? `/@${hub.user.handle}` : "");
     }
     if (target === "REFERRAL") {
-      const match = hub.shareLinks.find(
-        (l) => l.source === "REFERRAL" && l.socialChannel === channel,
-      );
-      return match?.url ?? hub.referralEntry?.url ?? "";
-    }
-    if (activeCampaign) {
-      const match = hub.shareLinks.find(
-        (l) => l.campaignId === activeCampaign.id && l.socialChannel === channel,
-      );
-      if (match) return match.url;
-      const anyMatch = hub.shareLinks.find((l) => l.campaignId === activeCampaign.id);
-      return anyMatch?.url ?? "";
+      return hub.referralEntry?.url ?? "";
     }
     return "";
-  }, [generatedUrls, activeLinkKey, hub, target, channel, activeCampaign]);
+  }, [generatedUrls, activeLinkKey, hub, target, activeShareLinkObj]);
 
   const absoluteShareUrl = useMemo(() => {
     if (!resolvedRelativeUrl) return "";
@@ -700,6 +729,23 @@ export function PromoteHubScreen({ onProfileUpdated }: { onProfileUpdated?: () =
                 <code>{activeCampaign.creativeBrief.disclosureNote}</code>
               </p>
             )}
+            <div className="form-actions" style={{ marginTop: 10 }}>
+              <a
+                href={`/api/campaigns/${encodeURIComponent(activeCampaign.id)}/brief-pdf?lang=${locale}`}
+                className="button button-small button-secondary"
+                download
+              >
+                <Download size={14} />
+                {t("p8OfferDownloadBriefPdf")}
+              </a>
+              <Link
+                href={`/offers/${encodeURIComponent(activeCampaign.id)}`}
+                className="button button-small button-secondary"
+              >
+                {t("p8OfferViewDetails")}
+                <ArrowUpRight size={14} />
+              </Link>
+            </div>
           </div>
         )}
 
@@ -964,7 +1010,26 @@ export function PromoteHubScreen({ onProfileUpdated }: { onProfileUpdated?: () =
         </section>
       )}
 
-      {/* 5. Performance by Social Network */}
+      {/* 5. Vanity Short Link & Mobile Smart Offer Bridge */}
+      <VanityLinkCard
+        link={activeShareLinkObj}
+        origin={typeof window !== "undefined" ? window.location.origin : ""}
+        onSaved={() => void hubRes.reload()}
+      />
+
+      {/* 6. Weekly Streak, Badges & Milestone PNG Cards (XP-Only) */}
+      <StreakBadgesMilestonePanel retention={hub.retention} handle={hub.user.handle} />
+
+      {/* 7. Social Content Planner & .ics Calendar Export */}
+      <SocialPostPlannerPanel
+        plans={hub.postPlans ?? []}
+        campaigns={hub.campaigns.map((c) => ({ id: c.id, name: c.name }))}
+        defaultCampaignId={activeCampaign?.id ?? ""}
+        defaultChannel={channel}
+        onChanged={() => void hubRes.reload()}
+      />
+
+      {/* 8. Performance by Social Network */}
       <section className="panel promote-channel-analytics">
         <div className="panel-header">
           <div>

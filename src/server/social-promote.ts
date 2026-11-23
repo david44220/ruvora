@@ -20,11 +20,13 @@ const RESERVED_HANDLES = new Set([
   "billing",
   "embed",
   "events",
+  "explore",
   "forgot_password",
   "go",
   "help",
   "login",
   "moderator",
+  "offers",
   "official",
   "onboarding",
   "privacy",
@@ -217,41 +219,51 @@ export async function getPromoteHub(user: User) {
     }
   }
 
-  const [campaignList, shareLinks, promoCodes, showcaseRows, channelAnalytics, referralFunnel] =
-    await Promise.all([
-      listCampaigns(fresh, { forCreator: fresh.roles.includes("CREATOR") }),
-      db.shareLink.findMany({
-        where: { ownerId: fresh.id, active: true },
-        orderBy: { createdAt: "desc" },
-        take: 60,
-        include: {
-          campaign: { select: { id: true, name: true } },
-          _count: { select: { growthEvents: true } },
-        },
-      }),
-      db.promoCode.findMany({
-        where: { creatorId: fresh.id, active: true },
-        select: { campaignId: true, code: true, discountLabel: true, usesCount: true },
-      }),
-      db.creatorShowcaseItem.findMany({
-        where: { creatorId: fresh.id, pinned: true },
-        orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
-        include: {
-          campaign: {
-            select: {
-              id: true,
-              name: true,
-              description: true,
-              objective: true,
-              state: true,
-              creativeBrief: true,
-            },
+  const [
+    campaignList,
+    shareLinks,
+    promoCodes,
+    showcaseRows,
+    channelAnalytics,
+    referralFunnel,
+    retention,
+    postPlansResult,
+  ] = await Promise.all([
+    listCampaigns(fresh, { forCreator: fresh.roles.includes("CREATOR") }),
+    db.shareLink.findMany({
+      where: { ownerId: fresh.id, active: true },
+      orderBy: { createdAt: "desc" },
+      take: 60,
+      include: {
+        campaign: { select: { id: true, name: true } },
+        _count: { select: { growthEvents: true } },
+      },
+    }),
+    db.promoCode.findMany({
+      where: { creatorId: fresh.id, active: true },
+      select: { campaignId: true, code: true, discountLabel: true, usesCount: true },
+    }),
+    db.creatorShowcaseItem.findMany({
+      where: { creatorId: fresh.id, pinned: true },
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
+      include: {
+        campaign: {
+          select: {
+            id: true,
+            name: true,
+            description: true,
+            objective: true,
+            state: true,
+            creativeBrief: true,
           },
         },
-      }),
-      getChannelAnalytics(fresh.id),
-      getReferralFunnel(fresh),
-    ]);
+      },
+    }),
+    getChannelAnalytics(fresh.id),
+    getReferralFunnel(fresh),
+    import("./retention").then((m) => m.getCreatorRetentionSummary(fresh.id)),
+    import("./retention").then((m) => m.listPostPlans(fresh)),
+  ]);
 
   const promoByCampaign = new Map(promoCodes.map((p) => [p.campaignId, p]));
   const showcaseByCampaign = new Map(showcaseRows.map((s) => [s.campaignId, s]));
@@ -289,7 +301,10 @@ export async function getPromoteHub(user: User) {
     shareLinks: shareLinks.map((l) => ({
       id: l.id,
       slug: l.slug,
+      customSlug: l.customSlug,
       url: `/go/${l.slug}`,
+      customUrl: l.customSlug ? `/go/${l.customSlug}` : null,
+      bridgeEnabled: l.bridgeEnabled,
       source: l.source,
       socialChannel: l.socialChannel,
       campaignId: l.campaignId,
@@ -308,6 +323,8 @@ export async function getPromoteHub(user: User) {
     })),
     channelAnalytics,
     referralFunnel,
+    retention,
+    postPlans: postPlansResult.plans,
   };
 }
 

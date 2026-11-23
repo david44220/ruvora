@@ -137,6 +137,9 @@ model User {
   audienceVerifiedPlatform     String?
   audienceVerifiedSource       String?
   directoryOptIn               Boolean              @default(true)
+  leaderboardOptIn             Boolean              @default(false)
+  notificationPrefs            Json?
+  lastWeeklyDigestAt           DateTime?
   kycStatus                    String               @default("UNVERIFIED")
   billingEntityName            String?
   vatNumber                    String?
@@ -160,6 +163,7 @@ model User {
   audienceSnapshots            AudienceVerificationSnapshot[]
   showcaseItems                CreatorShowcaseItem[]
   profileLinkClicks            ProfileLinkClick[]
+  postPlans                    CreatorPostPlan[]
 }
 
 model Session {
@@ -231,6 +235,7 @@ model Campaign {
   invitations             CampaignInvitation[]
   ugcDeliverables         UgcDeliverable[]
   showcaseItems           CreatorShowcaseItem[]
+  postPlans               CreatorPostPlan[]
 
   @@index([state, startAt, endAt])
   @@index([advertiserId, createdAt])
@@ -518,6 +523,7 @@ enum AttributionSource {
 model ShareLink {
   id            String               @id @default(cuid())
   slug          String               @unique
+  customSlug    String?              @unique
   canonicalKey  String               @unique
   ownerId       String
   creatorId     String?
@@ -526,6 +532,7 @@ model ShareLink {
   eventId       String?
   source        AttributionSource
   socialChannel String               @default("DIRECT")
+  bridgeEnabled Boolean              @default(false)
   active        Boolean              @default(true)
   isDemo        Boolean              @default(false)
   createdAt     DateTime             @default(now())
@@ -1060,4 +1067,24 @@ model ProfileLinkClick {
 
   @@index([userId, linkId])
   @@index([userId, createdAt])
+}
+
+model CreatorPostPlan {
+  id            String    @id @default(cuid())
+  userId        String
+  campaignId    String?
+  socialChannel String    @default("INSTAGRAM_STORY")
+  title         String
+  scheduledFor  DateTime
+  status        String    @default("PLANNED")
+  note          String    @default("")
+  checklist     Json      @default("{\"linkReady\":false,\"codeCopied\":false,\"disclosureIncluded\":true}")
+  publishedAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaign      Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+
+  @@index([userId, scheduledFor])
+  @@index([userId, status])
 }

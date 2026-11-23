@@ -45,6 +45,8 @@ export function publicUser(user: User) {
     preferredLanguages: user.preferredLanguages,
     autoMonetize: user.autoMonetize,
     directoryOptIn: user.directoryOptIn,
+    leaderboardOptIn: user.leaderboardOptIn,
+    notificationPrefs: user.notificationPrefs,
     kycStatus: user.kycStatus,
     billingEntityName: user.billingEntityName,
     vatNumber: user.vatNumber,

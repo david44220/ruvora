@@ -57,9 +57,12 @@ export interface PublicExploreCreator {
   isDemo: boolean;
 }
 
+import type { PublicLeaderboardEntry } from "./retention";
+
 export interface ExploreMarketplaceData {
   campaigns: PublicExploreCampaign[];
   creators: PublicExploreCreator[];
+  leaderboard: PublicLeaderboardEntry[];
   policy: {
     ruleVersion: string;
     followerThreshold: number;
@@ -261,9 +264,13 @@ export async function getExploreMarketplace(
     };
   }
 
+  const { getPublicOptInLeaderboard } = await import("./retention");
+  const leaderboard = await getPublicOptInLeaderboard(12);
+
   return {
     campaigns,
     creators,
+    leaderboard,
     policy: {
       ruleVersion: record.version,
       followerThreshold: config.creatorFollowerThreshold,

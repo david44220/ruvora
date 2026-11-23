@@ -5,6 +5,7 @@ import { processMailOutbox } from "../src/server/security/email";
 import { expireApprovals } from "../src/server/security/approvals";
 import { pruneExpiredRateLimits } from "../src/server/auth";
 import { processWebhookInbox } from "../src/server/webhooks";
+import { queueDueWeeklyDigests } from "../src/server/retention";
 import { validateRuntimeEnvironment } from "../src/server/environment";
 import { AppError } from "../src/server/errors";
 import { db, withAdvisoryLock } from "../src/server/db";
@@ -12,6 +13,7 @@ import { db, withAdvisoryLock } from "../src/server/db";
 const WORKER_ADVISORY_LOCK_KEY = 42026005;
 
 type WorkerOperations = {
+  digests?: () => Promise<{ queued: number }>;
   mail: () => Promise<{ processed: { id: string; status: string }[] }>;
   webhooks: () => Promise<{
     processed: { eventId: string; status: string; errorCode?: string }[];
@@ -26,6 +28,7 @@ type WorkerOperations = {
 /** Runtime preflight always happens before any queue claim or expiry mutation. */
 export async function processOutboxes(
   operations: WorkerOperations = {
+    digests: queueDueWeeklyDigests,
     mail: processMailOutbox,
     webhooks: processWebhookInbox,
     expire: expireApprovals,
@@ -35,6 +38,7 @@ export async function processOutboxes(
 ) {
   validateRuntimeEnvironment();
   const runBody = async () => {
+    const digests = operations.digests ? await operations.digests() : undefined;
     const mail = await operations.mail();
     const webhooks = await operations.webhooks();
     const approvals = await operations.expire();
@@ -42,6 +46,7 @@ export async function processOutboxes(
     // Explicit projections keep provider payloads, bigint values and mail secrets
     // out of stdout even when a service later adds fields to its return value.
     return {
+      ...(digests !== undefined ? { weeklyDigestsQueued: digests.queued } : {}),
       mail: {
         count: mail.processed.length,
         processed: mail.processed
