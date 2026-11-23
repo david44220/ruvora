@@ -54,6 +54,17 @@ async function sleep(ms: number) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isDriverAdapterRetryableError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null || !("name" in error)) return false;
+  if ((error as { name?: unknown }).name !== "DriverAdapterError") return false;
+  const cause = (error as { cause?: { kind?: unknown; originalCode?: unknown } }).cause;
+  return (
+    cause?.kind === "TransactionWriteConflict" ||
+    cause?.originalCode === "40001" ||
+    cause?.originalCode === "40P01"
+  );
+}
+
 /**
  * Every economic decision runs in a serializable transaction, retried with
  * exponential backoff + jitter on serialization/deadlock contention.
@@ -67,18 +78,25 @@ export async function atomic<T>(work: (tx: Tx) => Promise<T>): Promise<T> {
         timeout: 20_000,
       });
     } catch (error) {
-      // Raw FOR UPDATE queries use P2010 in the pg adapter, with the original
-      // SQLSTATE nested in driverAdapterError.cause rather than Prisma P2034.
-      if (isKnownPrismaError(error) && attempt < 4) {
-        const meta = error.meta as
-          { code?: string; driverAdapterError?: { cause?: { originalCode?: string } } } | undefined;
-        const sqlState = meta?.code ?? meta?.driverAdapterError?.cause?.originalCode;
-        if (
-          error.code === "P2034" ||
-          (error.code === "P2010" && (sqlState === "40001" || sqlState === "40P01"))
-        ) {
+      // Raw FOR UPDATE queries use P2010 in the pg adapter, while COMMIT conflicts
+      // in Prisma 7 + @prisma/adapter-pg can surface directly as DriverAdapterError.
+      if (attempt < 4) {
+        if (isDriverAdapterRetryableError(error)) {
           await sleep(retryBackoffMs(attempt));
           continue;
+        }
+        if (isKnownPrismaError(error)) {
+          const meta = error.meta as
+            | { code?: string; driverAdapterError?: { cause?: { originalCode?: string } } }
+            | undefined;
+          const sqlState = meta?.code ?? meta?.driverAdapterError?.cause?.originalCode;
+          if (
+            error.code === "P2034" ||
+            (error.code === "P2010" && (sqlState === "40001" || sqlState === "40P01"))
+          ) {
+            await sleep(retryBackoffMs(attempt));
+            continue;
+          }
         }
       }
       throw error;

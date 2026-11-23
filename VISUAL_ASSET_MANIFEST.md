@@ -79,3 +79,10 @@ No new AI artwork was generated. `scripts/optimize-assets.mjs` derives three ins
 ## Pass 08 dynamic campaign OG & creator milestone share cards
 
 No new AI artwork was generated. `/share-card/campaign/[id]` renders dynamic `1200×630` Open Graph / Twitter Cards (plus `?format=story` and `?format=square`) for public `/offers/[id]` sheets using `public/assets/share/ruvora-orb-card.png` and an ISO/IEC 18004 QR code pointing to `/offers/[id]`. `/share-card/milestone/[handle]` now supports any active creator (`xp >= 0`) with Level, XP, weekly consistency streak, and QR code pointing to `/@[handle]`.
+
+## Pass 09 multi-offer pack OG cards & 3-slide 4:5 carousel PNG kits
+
+No new AI artwork was generated. All new dynamic PNG derivatives reuse the canonical `public/assets/share/ruvora-orb-card.png` master and local ISO/IEC 18004 QR encoder (`src/lib/qr.ts`):
+
+- `/share-card/collection/[handle]?collection=[slug]` (`1200×630` banner OG card, plus `?format=story` `1080×1920` and `?format=square` `1080×1080`) with QR code pointing to `/c/[handle]/[slug]`.
+- `/share-card/carousel/[handle]?campaign=[id]&slide=1|2|3&format=portrait|story` introducing the `portrait` `4:5` (`1080×1350`) Instagram/TikTok carousel aspect ratio (Slide 1 Hook, Slide 2 Key Points from the advertiser's Creative Pack, Slide 3 Promo Code + CTA + QR to `/go/[slug]` + mandatory partner disclosure).

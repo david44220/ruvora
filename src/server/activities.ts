@@ -503,6 +503,8 @@ export async function reviewActivity(admin: User, activityId: string, input: unk
       data: awards.units.map((unit) => ({ ...unit, ruleVersion: record.version })),
     });
     if (awards.xp.amount > 0) await tx.xpEntry.create({ data: { ...awards.xp, activityId } });
+    const { notifySavedCampaignWatchers } = await import("./saved-campaigns");
+    await notifySavedCampaignWatchers(tx, activity.campaignId, "LOW_CAPACITY");
     if (awards.eventPoints && awards.eventPoints.amount > 0)
       await tx.eventPoint.create({
         data: {

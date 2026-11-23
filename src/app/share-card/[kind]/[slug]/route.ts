@@ -23,6 +23,8 @@ export async function GET(
   return renderShareCard(kind, slug, sp.get("lang"), {
     format: sp.get("format"),
     campaignId: sp.get("campaign"),
+    collectionSlug: sp.get("collection"),
+    slide: sp.get("slide"),
     download: sp.get("download") === "1",
   });
 }

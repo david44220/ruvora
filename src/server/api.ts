@@ -146,6 +146,21 @@ import {
   updateNotificationPreferences,
   updatePostPlan,
 } from "./retention";
+import {
+  deleteCreatorCollection,
+  getPublicCollection,
+  listCreatorCollections,
+  upsertCreatorCollection,
+} from "./collections";
+import {
+  confirmAudienceSubscription,
+  deleteAudienceSubscriber,
+  exportCreatorAudienceCsv,
+  listCreatorAudienceSubscribers,
+  subscribeToCreatorAudience,
+  unsubscribeAudience,
+} from "./audience-capture";
+import { listSavedCampaigns, toggleSavedCampaign } from "./saved-campaigns";
 export async function readJson(request: Request): Promise<unknown> {
   assert(
     request.headers.get("content-type")?.split(";")[0] === "application/json",
@@ -316,10 +331,24 @@ export async function handleApi(request: NextRequest, path: string[]) {
       if (route === "quests") return response(await listQuests(await requireUser()), requestId);
       if (path[0] === "offers" && path.length === 2)
         return response(await getPublicCampaignOffer(path[1]!), requestId);
+      if (path[0] === "collections" && path.length === 3) {
+        await limitRate("public-collection-ip", ip, 120, 60);
+        return response(await getPublicCollection(path[1]!, path[2]!), requestId);
+      }
       if (route === "leaderboard")
         return response({ entries: await getPublicOptInLeaderboard() }, requestId);
       if (route === "promote/hub")
         return response(await getPromoteHub(await requireUser()), requestId);
+      if (route === "promote/collections")
+        return response(await listCreatorCollections(await requireUser()), requestId);
+      if (route === "promote/audience")
+        return response(await listCreatorAudienceSubscribers(await requireUser()), requestId);
+      if (route === "promote/audience/export") {
+        const csv = await exportCreatorAudienceCsv(await requireUser());
+        return csvResponse(csv, "ruvora-audience-subscribers.csv", requestId);
+      }
+      if (route === "saved-campaigns")
+        return response(await listSavedCampaigns(await requireUser()), requestId);
       if (route === "promote/plans")
         return response(await listPostPlans(await requireUser()), requestId);
       if (path[0] === "promote" && path[1] === "plans" && path.length === 4 && path[3] === "ics") {
@@ -456,6 +485,15 @@ export async function handleApi(request: NextRequest, path: string[]) {
         await limitRate("profile-link-click-ip", ip, 120, 60);
         return response(await recordProfileLinkClick(path[1]!, input), requestId);
       }
+      if (path[0] === "audience" && path.length === 3 && path[2] === "subscribe") {
+        return response(await subscribeToCreatorAudience(path[1]!, input, ip), requestId, 201);
+      }
+      if (route === "audience/confirm") {
+        return response(await confirmAudienceSubscription(input), requestId);
+      }
+      if (route === "audience/unsubscribe") {
+        return response(await unsubscribeAudience(input), requestId);
+      }
       if (route === "attribution/start") {
         await limitRate("attribution-start-ip", ip, 120, 60);
         const { slug } = z
@@ -552,6 +590,24 @@ export async function handleApi(request: NextRequest, path: string[]) {
         return response(await updatePostPlan(user, path[2]!, input), requestId);
       if (path[0] === "promote" && path[1] === "plans" && path.length === 4 && path[3] === "delete")
         return response(await deletePostPlan(user, path[2]!), requestId);
+      if (route === "promote/collections")
+        return response(await upsertCreatorCollection(user, input), requestId, 201);
+      if (
+        path[0] === "promote" &&
+        path[1] === "collections" &&
+        path.length === 4 &&
+        path[3] === "delete"
+      )
+        return response(await deleteCreatorCollection(user, path[2]!), requestId);
+      if (
+        path[0] === "promote" &&
+        path[1] === "audience" &&
+        path.length === 4 &&
+        path[3] === "delete"
+      )
+        return response(await deleteAudienceSubscriber(user, path[2]!), requestId);
+      if (route === "saved-campaigns/toggle")
+        return response(await toggleSavedCampaign(user, input), requestId);
       if (route === "profile/modules")
         return response(await saveProfileModules(user, input), requestId);
       if (route === "profile/audience/begin")

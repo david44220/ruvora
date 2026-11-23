@@ -48,6 +48,17 @@ export class ResendEmailProvider implements EmailProvider {
       text = isFr
         ? `Bonjour ${name},\n\nVoici votre récapitulatif hebdomadaire Ruvora :\n- Niveau ${level} (${totalXp} XP)\n- Série hebdomadaire : ${streak} sem.\n- Interactions observées (7j) : ${weeklyEvents}\n- Posts planifiés publiés : ${publishedPlans}\n- Campagnes actives à découvrir : ${activeCampaigns}\n\nOuvrir votre studio : ${studioUrl}\n\nNote : Les XP et séries mesurent uniquement votre régularité et ne garantissent aucun revenu.`
         : `Hello ${name},\n\nHere is your weekly Ruvora recap:\n- Level ${level} (${totalXp} XP)\n- Weekly streak: ${streak} wk\n- Observed activity events (7d): ${weeklyEvents}\n- Published post plans: ${publishedPlans}\n- Active campaigns to explore: ${activeCampaigns}\n\nOpen your studio: ${studioUrl}\n\nNote: XP and streaks track consistency only and never guarantee income.`;
+    } else if (message.template === "AUDIENCE_CONFIRM") {
+      const creatorName = message.variables.creatorName ?? "Ruvora";
+      const creatorHandle = message.variables.creatorHandle ?? "";
+      const confirmUrl = message.variables.confirmUrl ?? "";
+      const unsubscribeUrl = message.variables.unsubscribeUrl ?? "";
+      subject = isFr
+        ? `Confirmez votre inscription aux bons plans de ${creatorName} (@${creatorHandle})`
+        : `Confirm your subscription to ${creatorName} (@${creatorHandle})`;
+      text = isFr
+        ? `Bonjour,\n\nConfirmez votre inscription en double opt-in pour recevoir les sélections partenaires de ${creatorName} (@${creatorHandle}) sur Ruvora :\n${confirmUrl}\n\nVous pourrez vous désinscrire en 1 clic à tout moment :\n${unsubscribeUrl}\n\nSi vous n'êtes pas à l'origine de cette demande, ignorez simplement cet e-mail.`
+        : `Hello,\n\nConfirm your double opt-in subscription to receive partner picks from ${creatorName} (@${creatorHandle}) on Ruvora:\n${confirmUrl}\n\nYou can unsubscribe in 1 click anytime:\n${unsubscribeUrl}\n\nIf you did not request this subscription, you can safely ignore this email.`;
     } else {
       subject =
         message.template === "password_reset" || message.template === "RESET_PASSWORD"

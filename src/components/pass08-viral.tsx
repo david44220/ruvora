@@ -1,29 +1,48 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ArrowLeft,
   ArrowUpRight,
   BadgeCheck,
+  Bookmark,
   Check,
   Copy,
   Download,
   ExternalLink,
   Megaphone,
+  Share2,
   ShieldCheck,
   Sparkles,
   Users,
 } from "lucide-react";
 import { useLocale } from "@/i18n/provider";
 import type { MessageKey } from "@/i18n/messages";
-import { ruNumber } from "@/lib/api";
+import { api, ruNumber } from "@/lib/api";
 import type { MobileBridgeCardData, PublicCampaignOffer } from "@/server/offers";
-import { Eyebrow, Footer, LanguageSwitch, Orb, PublicNav } from "./ui";
+import { Eyebrow, Footer, LanguageSwitch, Notice, Orb, PublicNav } from "./ui";
 
 export function PublicOfferSheet({ offer }: { offer: PublicCampaignOffer }) {
   const { locale, t } = useLocale();
   const [copied, setCopied] = useState(false);
+  const [saved, setSaved] = useState<boolean | null>(null);
+  const [saveBusy, setSaveBusy] = useState(false);
+  const [shareMsg, setShareMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void api<{ savedIds: string[] }>("/saved-campaigns")
+      .then((res) => {
+        if (active) setSaved(res.savedIds.includes(offer.id));
+      })
+      .catch(() => {
+        if (active) setSaved(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [offer.id]);
 
   const brief = offer.creativeBrief;
   const endDate = new Date(offer.endAt).toLocaleDateString(locale === "fr" ? "fr-FR" : "en-US", {
@@ -70,6 +89,38 @@ export function PublicOfferSheet({ offer }: { offer: PublicCampaignOffer }) {
       setTimeout(() => setCopied(false), 2500);
     } catch {
       // Clipboard may be unavailable in restricted contexts.
+    }
+  }
+
+  async function toggleSave() {
+    setSaveBusy(true);
+    try {
+      const res = await api<{ saved: boolean }>("/saved-campaigns/toggle", {
+        campaignId: offer.id,
+      });
+      setSaved(res.saved);
+      setShareMsg(t(res.saved ? "p9SavedToast" : "p9UnsavedToast"));
+    } finally {
+      setSaveBusy(false);
+    }
+  }
+
+  async function shareOffer() {
+    const url = typeof window !== "undefined" ? window.location.href : `/offers/${offer.id}`;
+    if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
+      try {
+        await navigator.share({ title: offer.name, url });
+        setShareMsg(t("p9OfferShareCopied"));
+        return;
+      } catch (e) {
+        if ((e as Error).name === "AbortError") return;
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      setShareMsg(t("p9OfferShareCopied"));
+    } catch {
+      // Ignore restricted clipboard environments.
     }
   }
 
@@ -122,7 +173,27 @@ export function PublicOfferSheet({ offer }: { offer: PublicCampaignOffer }) {
                   <Download size={15} aria-hidden="true" />
                   {t("p8OfferDownloadBriefPdf")}
                 </a>
+                {saved !== null && (
+                  <button
+                    type="button"
+                    className={`button button-secondary ${saved ? "button-saved-active" : ""}`}
+                    disabled={saveBusy}
+                    onClick={() => void toggleSave()}
+                  >
+                    <Bookmark size={15} aria-hidden="true" />
+                    {t(saved ? "p9SavedBtn" : "p9SaveBtn")}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => void shareOffer()}
+                >
+                  <Share2 size={15} aria-hidden="true" />
+                  {t("p9OfferShareBtn")}
+                </button>
               </div>
+              {shareMsg && <Notice message={shareMsg} />}
             </div>
 
             <div className="offer-kpi-strip">

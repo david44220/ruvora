@@ -92,6 +92,8 @@ export function ProfileForm({ user, onSaved }: { user: User; onSaved?: (user: Us
           autoMonetize: fields.get("autoMonetize") === "on",
           directoryOptIn: fields.get("directoryOptIn") === "on",
           leaderboardOptIn: fields.get("leaderboardOptIn") === "on",
+          audienceCaptureEnabled: fields.get("audienceCaptureEnabled") === "on",
+          audienceCapturePrompt: String(fields.get("audienceCapturePrompt") || "").trim(),
           billingEntityName: String(fields.get("billingEntityName") || "").trim(),
           vatNumber: String(fields.get("vatNumber") || "").trim(),
           locale,
@@ -238,6 +240,23 @@ export function ProfileForm({ user, onSaved }: { user: User; onSaved?: (user: Us
             {t("p8LeaderboardOptInLabel")}
           </label>
           <span className="field-hint">{t("p8LeaderboardOptInHint")}</span>
+        </div>
+        <div className="field full-width">
+          <label className="checkbox-field">
+            <input
+              name="audienceCaptureEnabled"
+              type="checkbox"
+              defaultChecked={user.audienceCaptureEnabled !== false}
+            />
+            {t("p9AudienceEnableLabel")}
+          </label>
+          <input
+            name="audienceCapturePrompt"
+            defaultValue={user.audienceCapturePrompt || ""}
+            placeholder={t("p9AudiencePromptPlaceholder")}
+            maxLength={120}
+            aria-label={t("p9AudiencePromptLabel")}
+          />
         </div>
         <label className="field">
           {t("p5BillingEntity")}
