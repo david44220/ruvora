@@ -553,6 +553,10 @@ export async function transitionCampaign(
       where: { id: campaignId },
       data: { state: nextState },
     });
+    if (value.action === "RESUME") {
+      const { notifySavedCampaignWatchers } = await import("./saved-campaigns");
+      await notifySavedCampaignWatchers(tx, campaignId, "RESUMED");
+    }
     await tx.auditLog.create({
       data: {
         actorId: user.id,

@@ -38,6 +38,13 @@ import {
   type CreatorPostPlanItem,
   type CreatorRetentionData,
 } from "./pass08-retention";
+import {
+  AudienceSubscribersPanel,
+  CollectionsManagerPanel,
+  type AudienceSummaryData,
+  type CreatorCollectionSummary,
+} from "./pass09-collections";
+import { VideoScriptAndCarouselPanel } from "./pass09-studio";
 
 interface PromoteCampaignItem {
   id: string;
@@ -102,6 +109,13 @@ export interface ReferralFunnelData {
   referralRuMicros: string;
   monthlyCapMicros: string;
   maxQualifiedReferees: number;
+  byChannel?: {
+    channel: string;
+    visits: number;
+    registrations: number;
+    qualifiedReferees: number;
+    referralRuMicros: string;
+  }[];
 }
 
 interface PromoteHubData {
@@ -118,6 +132,8 @@ interface PromoteHubData {
   referralFunnel: ReferralFunnelData;
   retention?: CreatorRetentionData;
   postPlans?: CreatorPostPlanItem[];
+  collections?: CreatorCollectionSummary[];
+  audience?: AudienceSummaryData;
 }
 
 const PLATFORMS = [
@@ -1010,17 +1026,42 @@ export function PromoteHubScreen({ onProfileUpdated }: { onProfileUpdated?: () =
         </section>
       )}
 
-      {/* 5. Vanity Short Link & Mobile Smart Offer Bridge */}
+      {/* 5. Short-Form Video Scripts (15-30s) & 3-Slide Carousel PNG Kit */}
+      <VideoScriptAndCarouselPanel
+        handle={hub.user.handle}
+        campaign={activeCampaign}
+        shareUrl={absoluteShareUrl || null}
+      />
+
+      {/* 6. Shareable Multi-Offer Collections (/c/@handle/slug) */}
+      <CollectionsManagerPanel
+        handle={hub.user.handle}
+        campaigns={hub.campaigns.map((c) => ({
+          id: c.id,
+          name: c.name,
+          objective: c.objective,
+          canParticipate: c.canParticipate,
+        }))}
+        collections={hub.collections ?? []}
+        onChanged={() => void hubRes.reload()}
+      />
+
+      {/* 7. Double Opt-In Audience Capture & Subscribers CSV */}
+      {hub.audience && (
+        <AudienceSubscribersPanel audience={hub.audience} onChanged={() => void hubRes.reload()} />
+      )}
+
+      {/* 8. Vanity Short Link & Mobile Smart Offer Bridge */}
       <VanityLinkCard
         link={activeShareLinkObj}
         origin={typeof window !== "undefined" ? window.location.origin : ""}
         onSaved={() => void hubRes.reload()}
       />
 
-      {/* 6. Weekly Streak, Badges & Milestone PNG Cards (XP-Only) */}
+      {/* 9. Weekly Streak, Badges & Milestone PNG Cards (XP-Only) */}
       <StreakBadgesMilestonePanel retention={hub.retention} handle={hub.user.handle} />
 
-      {/* 7. Social Content Planner & .ics Calendar Export */}
+      {/* 10. Social Content Planner & .ics Calendar Export */}
       <SocialPostPlannerPanel
         plans={hub.postPlans ?? []}
         campaigns={hub.campaigns.map((c) => ({ id: c.id, name: c.name }))}
@@ -1029,7 +1070,7 @@ export function PromoteHubScreen({ onProfileUpdated }: { onProfileUpdated?: () =
         onChanged={() => void hubRes.reload()}
       />
 
-      {/* 8. Performance by Social Network */}
+      {/* 11. Performance by Social Network */}
       <section className="panel promote-channel-analytics">
         <div className="panel-header">
           <div>
@@ -1086,13 +1127,15 @@ export function PromoteHubScreen({ onProfileUpdated }: { onProfileUpdated?: () =
 }
 
 /**
- * Upgraded viral direct-referral kit + transparent funnel rendered inside /app/referrals.
+ * Upgraded viral direct-referral kit + transparent funnel + channel-tracked links rendered inside /app/referrals.
  */
 export function ReferralViralKitPanel({ handle }: { handle: string | null }) {
   const { t, locale } = useLocale();
   const funnelRes = useResource<ReferralFunnelData>("/referrals/funnel");
   const shareAction = useAction();
   const [copied, setCopied] = useState(false);
+  const [refChannel, setRefChannel] = useState<SocialChannel>("TIKTOK");
+  const [channelCopied, setChannelCopied] = useState(false);
 
   const f = funnelRes.data;
   const referralUrl =
@@ -1101,6 +1144,9 @@ export function ReferralViralKitPanel({ handle }: { handle: string | null }) {
       : handle
         ? `/r/${handle}`
         : "";
+  const channelReferralUrl = referralUrl
+    ? `${referralUrl}?channel=${encodeURIComponent(refChannel.toLowerCase())}`
+    : "";
 
   const storyUrl = handle
     ? `/share-card/referral/${encodeURIComponent(handle)}?format=story&lang=${locale}`
@@ -1109,8 +1155,8 @@ export function ReferralViralKitPanel({ handle }: { handle: string | null }) {
   const inviteTemplate = buildSocialPostTemplate({
     kind: "REFERRAL",
     locale,
-    channel: "WHATSAPP",
-    url: referralUrl || "https://ruvora.app",
+    channel: refChannel,
+    url: channelReferralUrl || referralUrl || "https://ruvora.app",
     creatorHandle: handle,
   });
 
@@ -1119,7 +1165,17 @@ export function ReferralViralKitPanel({ handle }: { handle: string | null }) {
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
     await shareAction.run(() =>
-      api("/promote/track-share", { socialChannel: "WHATSAPP", surface: "REFERRAL" }),
+      api("/promote/track-share", { socialChannel: refChannel, surface: "REFERRAL" }),
+    );
+  }
+
+  async function copyChannelLink() {
+    if (!channelReferralUrl) return;
+    await navigator.clipboard.writeText(channelReferralUrl);
+    setChannelCopied(true);
+    setTimeout(() => setChannelCopied(false), 2000);
+    await shareAction.run(() =>
+      api("/promote/track-share", { socialChannel: refChannel, surface: "REFERRAL" }),
     );
   }
 
@@ -1147,6 +1203,83 @@ export function ReferralViralKitPanel({ handle }: { handle: string | null }) {
           </div>
         ) : null}
       </section>
+
+      {handle && (
+        <section className="panel">
+          <div className="panel-header">
+            <div>
+              <h2>{t("p9ReferralChannelTitle")}</h2>
+              <p className="panel-description">{t("p9ReferralChannelSubtitle")}</p>
+            </div>
+          </div>
+          <div className="promote-channel-strip" role="group">
+            {PROMOTABLE_CHANNELS.map((ch) => (
+              <button
+                key={ch}
+                type="button"
+                className={`chip-toggle ${refChannel === ch ? "chip-active" : ""}`}
+                aria-pressed={refChannel === ch}
+                onClick={() => setRefChannel(ch)}
+              >
+                {channelLabel(ch, locale)}
+              </button>
+            ))}
+          </div>
+          <div className="promote-link-bar" style={{ marginTop: 12 }}>
+            <div className="promote-link-display">
+              <small>
+                {t("p9ReferralChannelLinkLabel")} ·{" "}
+                <strong>{channelLabel(refChannel, locale)}</strong>
+              </small>
+              <code>{channelReferralUrl}</code>
+            </div>
+            <div className="form-actions">
+              <button
+                type="button"
+                className="button button-small"
+                onClick={() => void copyChannelLink()}
+              >
+                {channelCopied ? <Check size={14} /> : <Copy size={14} />}
+                {t(channelCopied ? "p9ReferralChannelCopied" : "p9ReferralCopyChannelBtn")}
+              </button>
+            </div>
+          </div>
+
+          <h3 style={{ marginTop: 18, marginBottom: 8 }}>{t("p9ReferralSourcesHeading")}</h3>
+          {f?.byChannel && f.byChannel.length > 0 ? (
+            <div className="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>{t("p9ReferralColChannel")}</th>
+                    <th>{t("p9ReferralColVisits")}</th>
+                    <th>{t("p9ReferralColSignups")}</th>
+                    <th>{t("p9ReferralColQualified")}</th>
+                    <th>{t("p9ReferralColRu")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {f.byChannel.map((row) => (
+                    <tr key={row.channel}>
+                      <td>
+                        <strong>{channelLabel(row.channel, locale)}</strong>
+                      </td>
+                      <td className="number">{row.visits}</td>
+                      <td className="number">{row.registrations}</td>
+                      <td className="number">{row.qualifiedReferees}</td>
+                      <td className="number">
+                        {ruNumber(row.referralRuMicros, locale)} {t("ruUnit")}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <Empty>{t("p9ReferralNoSources")}</Empty>
+          )}
+        </section>
+      )}
 
       {storyUrl && (
         <section className="panel">

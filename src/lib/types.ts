@@ -54,6 +54,8 @@ export interface User {
   autoMonetize?: boolean;
   directoryOptIn?: boolean;
   leaderboardOptIn?: boolean;
+  audienceCaptureEnabled?: boolean;
+  audienceCapturePrompt?: string;
   notificationPrefs?: NotificationPrefs | null;
   kycStatus?: string;
   billingEntityName?: string | null;

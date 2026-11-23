@@ -90,6 +90,20 @@ export const QUEST_DEFINITIONS: readonly QuestDefinition[] = [
     descriptionKey: "p8QuestConsistentPromoterDesc",
     href: "/app/promote",
   },
+  {
+    code: "FIRST_COLLECTION",
+    xpAwarded: 50,
+    titleKey: "p9QuestFirstCollectionTitle",
+    descriptionKey: "p9QuestFirstCollectionDesc",
+    href: "/app/promote",
+  },
+  {
+    code: "AUDIENCE_BUILDER",
+    xpAwarded: 75,
+    titleKey: "p9QuestAudienceBuilderTitle",
+    descriptionKey: "p9QuestAudienceBuilderDesc",
+    href: "/app/promote",
+  },
 ] as const;
 
 export interface QuestFacts {
@@ -107,6 +121,8 @@ export interface QuestFacts {
   showcasePinnedCount?: number;
   postPlansCount?: number;
   publishedPostPlansCount?: number;
+  publishedCollectionsCount?: number;
+  confirmedSubscribersCount?: number;
 }
 
 export function evaluateQuestCompletion(code: string, facts: QuestFacts): boolean {
@@ -138,6 +154,10 @@ export function evaluateQuestCompletion(code: string, facts: QuestFacts): boolea
         ((facts.publishedPostPlansCount ?? 0) >= 1 && (facts.socialShareChannels ?? 0) >= 1) ||
         (facts.publishedPostPlansCount ?? 0) >= 2
       );
+    case "FIRST_COLLECTION":
+      return (facts.publishedCollectionsCount ?? 0) >= 1;
+    case "AUDIENCE_BUILDER":
+      return (facts.confirmedSubscribersCount ?? 0) >= 1;
     default:
       return false;
   }
@@ -154,6 +174,8 @@ async function gatherQuestFacts(client: PrismaClient | Tx, userId: string): Prom
     showcasePinnedCount,
     postPlansCount,
     publishedPostPlansCount,
+    publishedCollectionsCount,
+    confirmedSubscribersCount,
   ] = await Promise.all([
     client.user.findUniqueOrThrow({ where: { id: userId } }),
     client.activity.count({ where: { userId, state: "VALIDATED" } }),
@@ -172,6 +194,8 @@ async function gatherQuestFacts(client: PrismaClient | Tx, userId: string): Prom
     client.creatorShowcaseItem.count({ where: { creatorId: userId, pinned: true } }),
     client.creatorPostPlan.count({ where: { userId } }),
     client.creatorPostPlan.count({ where: { userId, status: "PUBLISHED" } }),
+    client.creatorCollection.count({ where: { creatorId: userId, published: true } }),
+    client.audienceSubscriber.count({ where: { creatorId: userId, status: "CONFIRMED" } }),
   ]);
   const socials = Array.isArray(fresh.socialLinks) ? fresh.socialLinks : [];
   const distinctChannels = new Set([
@@ -193,6 +217,8 @@ async function gatherQuestFacts(client: PrismaClient | Tx, userId: string): Prom
     showcasePinnedCount,
     postPlansCount,
     publishedPostPlansCount,
+    publishedCollectionsCount,
+    confirmedSubscribersCount,
   };
 }
 

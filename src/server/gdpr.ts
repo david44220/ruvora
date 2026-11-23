@@ -36,6 +36,9 @@ export async function exportUserGdprData(user: User) {
     showcaseItems,
     profileLinkClicksCount,
     postPlans,
+    collections,
+    savedCampaigns,
+    audienceSubscribersCount,
   ] = await Promise.all([
     db.user.findUniqueOrThrow({
       where: { id: user.id },
@@ -62,6 +65,8 @@ export async function exportUserGdprData(user: User) {
         profileTheme: true,
         directoryOptIn: true,
         leaderboardOptIn: true,
+        audienceCaptureEnabled: true,
+        audienceCapturePrompt: true,
         notificationPrefs: true,
         kycStatus: true,
         billingEntityName: true,
@@ -186,6 +191,28 @@ export async function exportUserGdprData(user: User) {
       },
       orderBy: { scheduledFor: "desc" },
     }),
+    db.creatorCollection.findMany({
+      where: { creatorId: user.id },
+      select: {
+        id: true,
+        slug: true,
+        title: true,
+        description: true,
+        theme: true,
+        published: true,
+        viewsCount: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: "desc" },
+    }),
+    db.savedCampaign.findMany({
+      where: { userId: user.id },
+      select: { campaignId: true, createdAt: true },
+      orderBy: { createdAt: "desc" },
+    }),
+    db.audienceSubscriber.count({
+      where: { creatorId: user.id, status: "CONFIRMED" },
+    }),
   ]);
 
   return jsonValue({
@@ -215,6 +242,9 @@ export async function exportUserGdprData(user: User) {
     showcaseItems,
     profileLinkClicksCount,
     postPlans,
+    collections,
+    savedCampaigns,
+    audienceSubscribersCount,
   });
 }
 
@@ -283,6 +313,9 @@ export async function anonymizeUserAccount(
     await tx.creatorShowcaseItem.deleteMany({ where: { creatorId: user.id } });
     await tx.profileLinkClick.deleteMany({ where: { userId: user.id } });
     await tx.creatorPostPlan.deleteMany({ where: { userId: user.id } });
+    await tx.creatorCollection.deleteMany({ where: { creatorId: user.id } });
+    await tx.audienceSubscriber.deleteMany({ where: { creatorId: user.id } });
+    await tx.savedCampaign.deleteMany({ where: { userId: user.id } });
     await tx.shareLink.updateMany({ where: { ownerId: user.id }, data: { active: false } });
     await tx.promoCode.updateMany({ where: { creatorId: user.id }, data: { active: false } });
     await tx.advertiserIntegration.deleteMany({ where: { advertiserId: user.id } });
@@ -307,6 +340,8 @@ export async function anonymizeUserAccount(
         vatNumber: null,
         directoryOptIn: false,
         leaderboardOptIn: false,
+        audienceCaptureEnabled: false,
+        audienceCapturePrompt: "",
         notificationPrefs: jsonValue(null),
         lastWeeklyDigestAt: null,
         autoMonetize: false,

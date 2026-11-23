@@ -46,6 +46,8 @@ export function publicUser(user: User) {
     autoMonetize: user.autoMonetize,
     directoryOptIn: user.directoryOptIn,
     leaderboardOptIn: user.leaderboardOptIn,
+    audienceCaptureEnabled: user.audienceCaptureEnabled,
+    audienceCapturePrompt: user.audienceCapturePrompt,
     notificationPrefs: user.notificationPrefs,
     kycStatus: user.kycStatus,
     billingEntityName: user.billingEntityName,

@@ -120,6 +120,22 @@ export function isSocialChannel(value: unknown): value is SocialChannel {
   return typeof value === "string" && (SOCIAL_CHANNELS as readonly string[]).includes(value);
 }
 
+/** Normalizes a URL query channel hint (e.g. ?channel=tiktok) to a canonical SocialChannel. */
+export function normalizeSocialChannel(raw: string | null | undefined): SocialChannel {
+  if (!raw) return "DIRECT";
+  const upper = raw
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, "_");
+  if (isSocialChannel(upper)) return upper;
+  if (upper === "IG" || upper === "INSTAGRAM" || upper === "REELS" || upper === "STORY")
+    return "INSTAGRAM_STORY";
+  if (upper === "TWITTER") return "X";
+  if (upper === "YT" || upper === "SHORTS") return "YOUTUBE";
+  if (upper === "SNAP") return "SNAPCHAT";
+  return "DIRECT";
+}
+
 export function channelLabel(channel: string, locale: "en" | "fr"): string {
   if (isSocialChannel(channel)) {
     return locale === "fr"

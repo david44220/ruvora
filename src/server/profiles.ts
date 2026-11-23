@@ -97,6 +97,8 @@ const profileSchema = z
     autoMonetize: z.boolean().optional(),
     directoryOptIn: z.boolean().optional(),
     leaderboardOptIn: z.boolean().optional(),
+    audienceCaptureEnabled: z.boolean().optional(),
+    audienceCapturePrompt: z.string().trim().max(120).optional(),
     billingEntityName: z.string().trim().max(120).optional(),
     vatNumber: z.string().trim().max(40).optional(),
     profileTheme: z.enum(["obsidian", "champagne", "emerald-dusk", "amber-glow"]).optional(),
@@ -167,6 +169,12 @@ export async function saveProfile(user: User, input: unknown) {
         ...(value.leaderboardOptIn !== undefined
           ? { leaderboardOptIn: value.leaderboardOptIn }
           : {}),
+        ...(value.audienceCaptureEnabled !== undefined
+          ? { audienceCaptureEnabled: value.audienceCaptureEnabled }
+          : {}),
+        ...(value.audienceCapturePrompt !== undefined
+          ? { audienceCapturePrompt: value.audienceCapturePrompt }
+          : {}),
         ...(value.billingEntityName !== undefined
           ? { billingEntityName: value.billingEntityName || null }
           : {}),
@@ -220,6 +228,8 @@ export async function getPublicProfile(handle: string) {
       city: true,
       profileTheme: true,
       autoMonetize: true,
+      audienceCaptureEnabled: true,
+      audienceCapturePrompt: true,
       socialLinks: true,
       customLinks: true,
       followers: true,
@@ -398,13 +408,32 @@ export async function getPublicProfile(handle: string) {
     .sort((a, b) => Number(b.pinned) - Number(a.pinned));
 
   const { getCreatorRetentionSummary } = await import("./retention");
-  const retention = await getCreatorRetentionSummary(user.id);
+  const [retention, publishedCollections] = await Promise.all([
+    getCreatorRetentionSummary(user.id),
+    db.creatorCollection.findMany({
+      where: { creatorId: user.id, published: true },
+      orderBy: [{ updatedAt: "desc" }],
+      take: 6,
+      include: { _count: { select: { items: true } } },
+    }),
+  ]);
 
   return {
     entry,
     referralEntry,
     opportunities,
     showcase,
+    collections: publishedCollections
+      .filter((c) => c._count.items > 0)
+      .map((c) => ({
+        id: c.id,
+        slug: c.slug,
+        title: c.title,
+        description: c.description,
+        theme: c.theme,
+        itemCount: c._count.items,
+        url: `/c/${user.handle}/${c.slug}`,
+      })),
     trackedEvents,
     profile: {
       ...user,

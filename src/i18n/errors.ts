@@ -478,6 +478,34 @@ const errors: Record<string, [string, string]> = {
     "You can pin up to 6 active campaigns in your public showcase.",
     "Vous pouvez épingler jusqu’à 6 campagnes actives dans votre vitrine publique.",
   ],
+  COLLECTION_NOT_FOUND: [
+    "This offer collection is not available.",
+    "Cette collection d’offres n’est pas disponible.",
+  ],
+  COLLECTION_LIMIT: [
+    "You can maintain up to 12 offer collections.",
+    "Vous pouvez gérer jusqu’à 12 collections d’offres.",
+  ],
+  INVALID_COLLECTION_SLUG: [
+    "Use 3 to 40 lowercase letters, digits or hyphens for a collection slug.",
+    "Utilisez 3 à 40 lettres minuscules, chiffres ou tirets pour le slug de collection.",
+  ],
+  AUDIENCE_CAPTURE_DISABLED: [
+    "This creator has disabled newsletter subscriptions.",
+    "Ce créateur a désactivé les inscriptions à sa liste.",
+  ],
+  INVALID_AUDIENCE_TOKEN: [
+    "This subscription confirmation or unsubscribe link is invalid or already used.",
+    "Ce lien de confirmation ou de désinscription est invalide ou déjà utilisé.",
+  ],
+  SUBSCRIBER_NOT_FOUND: [
+    "This subscriber record could not be found.",
+    "Cet abonné est introuvable.",
+  ],
+  SAVED_CAMPAIGN_LIMIT: [
+    "You can save up to 30 offers in your watchlist.",
+    "Vous pouvez sauvegarder jusqu’à 30 offres dans vos favoris.",
+  ],
 };
 export function errorMessage(code: string, locale: Locale) {
   return (

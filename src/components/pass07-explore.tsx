@@ -1,29 +1,32 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   ArrowUpRight,
   Award,
   BadgeCheck,
+  Bookmark,
   Check,
   Compass,
   Filter,
   Flame,
   FlaskConical,
   Megaphone,
+  Scale,
   Search,
   Smartphone,
   Sparkles,
   Trophy,
   Users,
+  X,
   Zap,
 } from "lucide-react";
 import { useLocale } from "@/i18n/provider";
 import type { MessageKey } from "@/i18n/messages";
 import { api, ruNumber } from "@/lib/api";
 import type { ExploreMarketplaceData } from "@/server/explore";
-import { Empty, Eyebrow, Footer, Orb, PublicNav } from "./ui";
+import { Empty, Eyebrow, Footer, Notice, Orb, PublicNav } from "./ui";
 
 const PLATFORMS = ["Instagram", "TikTok", "YouTube", "Twitch", "X", "Discord"] as const;
 const OBJECTIVES = ["CLICK", "QUALIFIED_VIEW", "CONVERSION", "SPONSORED_MISSION"] as const;
@@ -37,6 +40,59 @@ export function ExploreMarketplace({ initialData }: { initialData: ExploreMarket
   const [platform, setPlatform] = useState("");
   const [country, setCountry] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Pass 09: Saved offers watchlist (when signed in) + Side-by-Side Offer Comparator (up to 3)
+  const [savedIds, setSavedIds] = useState<string[] | null>(null);
+  const [compareIds, setCompareIds] = useState<string[]>([]);
+  const [exploreNotice, setExploreNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void api<{ savedIds: string[] }>("/saved-campaigns")
+      .then((res) => {
+        if (active) setSavedIds(res.savedIds);
+      })
+      .catch(() => {
+        if (active) setSavedIds(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function toggleSaved(campaignId: string) {
+    try {
+      const res = await api<{ saved: boolean }>("/saved-campaigns/toggle", { campaignId });
+      setSavedIds((prev) => {
+        const cur = prev ?? [];
+        return res.saved
+          ? [...new Set([...cur, campaignId])]
+          : cur.filter((id) => id !== campaignId);
+      });
+      setExploreNotice(t(res.saved ? "p9SavedToast" : "p9UnsavedToast"));
+    } catch {
+      // Unauthenticated users won't see the button, ignore errors cleanly.
+    }
+  }
+
+  function toggleCompare(campaignId: string) {
+    setCompareIds((prev) => {
+      if (prev.includes(campaignId)) return prev.filter((id) => id !== campaignId);
+      if (prev.length >= 3) {
+        setExploreNotice(t("p9CompareLimitHint"));
+        return prev;
+      }
+      return [...prev, campaignId];
+    });
+  }
+
+  const comparedCampaigns = useMemo(
+    () =>
+      compareIds
+        .map((id) => data.campaigns.find((c) => c.id === id))
+        .filter((c): c is ExploreMarketplaceData["campaigns"][number] => Boolean(c)),
+    [compareIds, data.campaigns],
+  );
 
   // Pedagogical simulator state
   const [simObjective, setSimObjective] = useState<string>("CONVERSION");
@@ -197,7 +253,133 @@ export function ExploreMarketplace({ initialData }: { initialData: ExploreMarket
               {t("p7ExploreTabCreators")} ({data.creators.length})
             </button>
           </div>
+          {exploreNotice && (
+            <div style={{ marginTop: 12 }}>
+              <Notice message={exploreNotice} />
+            </div>
+          )}
         </section>
+
+        {comparedCampaigns.length > 0 && (
+          <section className="wrap" style={{ marginTop: 18 }}>
+            <div className="panel offer-comparator-panel">
+              <div className="panel-header">
+                <div>
+                  <Eyebrow>
+                    <Scale size={12} style={{ marginRight: 6 }} />
+                    {t("p9CompareBarTitle")} ({comparedCampaigns.length}/3)
+                  </Eyebrow>
+                  <h2>{t("p9CompareBarTitle")}</h2>
+                  <p className="panel-description">{t("p9CompareBarSubtitle")}</p>
+                </div>
+                <button
+                  type="button"
+                  className="button button-small button-secondary"
+                  onClick={() => setCompareIds([])}
+                >
+                  <X size={14} />
+                  {t("p9CompareClearBtn")}
+                </button>
+              </div>
+              <div className="table-scroll">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th />
+                      {comparedCampaigns.map((camp) => (
+                        <th key={camp.id}>
+                          <Link
+                            href={`/offers/${encodeURIComponent(camp.id)}`}
+                            className="text-link"
+                          >
+                            {camp.name}
+                          </Link>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>{t("p9CompareMetricObjective")}</td>
+                      {comparedCampaigns.map((camp) => (
+                        <td key={camp.id}>{t(`objective${camp.objective}` as MessageKey)}</td>
+                      ))}
+                    </tr>
+                    <tr>
+                      <td>{t("p9CompareMetricRate")}</td>
+                      {comparedCampaigns.map((camp) => {
+                        const rate = data.policy.rates[camp.objective] ?? data.policy.rates.CLICK;
+                        return (
+                          <td key={camp.id} className="number">
+                            {rate
+                              ? `+${ruNumber(rate.creatorRuMicros, locale)} ${t("ruUnit")} · +${rate.xp} ${t("xpUnit")}`
+                              : "—"}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                    <tr>
+                      <td>{t("p9CompareMetricCapacity")}</td>
+                      {comparedCampaigns.map((camp) => (
+                        <td key={camp.id} className="number">
+                          {camp.budgetRemainingPct}%
+                        </td>
+                      ))}
+                    </tr>
+                    <tr>
+                      <td>{t("p9CompareMetricFollowers")}</td>
+                      {comparedCampaigns.map((camp) => (
+                        <td key={camp.id} className="number">
+                          &ge; {camp.minimumCreatorFollowers.toLocaleString(locale)}
+                        </td>
+                      ))}
+                    </tr>
+                    <tr>
+                      <td>{t("p9CompareMetricPlatforms")}</td>
+                      {comparedCampaigns.map((camp) => (
+                        <td key={camp.id}>
+                          {camp.allowedPlatforms.length
+                            ? camp.allowedPlatforms.join(", ")
+                            : t("p9CompareAllPlatforms")}
+                        </td>
+                      ))}
+                    </tr>
+                    <tr>
+                      <td>{t("p9CompareMetricRouting")}</td>
+                      {comparedCampaigns.map((camp) => (
+                        <td key={camp.id}>
+                          {t(camp.hasSmartRouting ? "p9CompareYes" : "p9CompareNo")}
+                        </td>
+                      ))}
+                    </tr>
+                    <tr>
+                      <td>{t("p9CompareMetricBrief")}</td>
+                      {comparedCampaigns.map((camp) => (
+                        <td key={camp.id}>{t(camp.hasBrief ? "p9CompareYes" : "p9CompareNo")}</td>
+                      ))}
+                    </tr>
+                    <tr>
+                      <td />
+                      {comparedCampaigns.map((camp) => (
+                        <td key={camp.id}>
+                          <Link
+                            href={`/app/promote?campaign=${encodeURIComponent(camp.id)}`}
+                            className="button button-small"
+                          >
+                            {t("p7ExplorePromoteBtn")}
+                          </Link>
+                        </td>
+                      ))}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <p className="field-hint" style={{ marginTop: 10 }}>
+                {t("p7SimDisclaimer")}
+              </p>
+            </div>
+          </section>
+        )}
 
         <section className="wrap explore-results">
           {tab === "campaigns" ? (
@@ -205,74 +387,98 @@ export function ExploreMarketplace({ initialData }: { initialData: ExploreMarket
               <Empty>{t("p7ExploreNoCampaigns")}</Empty>
             ) : (
               <div className="campaign-grid">
-                {data.campaigns.map((camp) => (
-                  <article key={camp.id} className="campaign-card explore-card">
-                    <div className="profile-badge-row" style={{ justifyContent: "flex-start" }}>
-                      <span className="tag">
-                        <Check size={12} />
-                        {t("verified")}
-                      </span>
-                      <span className="tag">{t(`objective${camp.objective}` as MessageKey)}</span>
-                      {camp.hasSmartRouting && (
-                        <span className="tag tag-verified">
-                          <Smartphone size={12} />
-                          {t("p7ExploreSmartRoutingBadge")}
-                        </span>
-                      )}
-                      {camp.hasBrief && (
+                {data.campaigns.map((camp) => {
+                  const isSaved = savedIds?.includes(camp.id) ?? false;
+                  const isCompared = compareIds.includes(camp.id);
+                  return (
+                    <article key={camp.id} className="campaign-card explore-card">
+                      <div className="profile-badge-row" style={{ justifyContent: "flex-start" }}>
                         <span className="tag">
-                          <Sparkles size={12} />
-                          {t("p7ExploreBriefBadge")}
+                          <Check size={12} />
+                          {t("verified")}
                         </span>
-                      )}
-                    </div>
-                    <h3>{camp.name}</h3>
-                    <p className="field-hint" style={{ margin: "0 0 8px" }}>
-                      {camp.advertiserName}
-                      {camp.allowedCountries.length > 0
-                        ? ` · ${camp.allowedCountries.slice(0, 4).join(", ")}`
-                        : ""}
-                    </p>
-                    <p className="panel-description">{camp.description}</p>
-                    <div className="budget-meter">
-                      <div className="budget-meter-label">
-                        <small>{t("p4BudgetRemaining")}</small>
-                        <small className="number">{camp.budgetRemainingPct}%</small>
+                        <span className="tag">{t(`objective${camp.objective}` as MessageKey)}</span>
+                        {camp.hasSmartRouting && (
+                          <span className="tag tag-verified">
+                            <Smartphone size={12} />
+                            {t("p7ExploreSmartRoutingBadge")}
+                          </span>
+                        )}
+                        {camp.hasBrief && (
+                          <span className="tag">
+                            <Sparkles size={12} />
+                            {t("p7ExploreBriefBadge")}
+                          </span>
+                        )}
                       </div>
-                      <div className="progress-track">
-                        <span style={{ width: `${camp.budgetRemainingPct}%` }} />
+                      <h3>{camp.name}</h3>
+                      <p className="field-hint" style={{ margin: "0 0 8px" }}>
+                        {camp.advertiserName}
+                        {camp.allowedCountries.length > 0
+                          ? ` · ${camp.allowedCountries.slice(0, 4).join(", ")}`
+                          : ""}
+                      </p>
+                      <p className="panel-description">{camp.description}</p>
+                      <div className="budget-meter">
+                        <div className="budget-meter-label">
+                          <small>{t("p4BudgetRemaining")}</small>
+                          <small className="number">{camp.budgetRemainingPct}%</small>
+                        </div>
+                        <div className="progress-track">
+                          <span style={{ width: `${camp.budgetRemainingPct}%` }} />
+                        </div>
                       </div>
-                    </div>
-                    <div className="profile-badge-row" style={{ justifyContent: "flex-start" }}>
-                      <span className="tag">
-                        {t("p7ExploreMinFollowers")}:{" "}
-                        {camp.minimumCreatorFollowers.toLocaleString(locale)}
-                      </span>
-                      {camp.allowedPlatforms.slice(0, 3).map((p) => (
-                        <span key={p} className="tag">
-                          {p}
+                      <div className="profile-badge-row" style={{ justifyContent: "flex-start" }}>
+                        <span className="tag">
+                          {t("p7ExploreMinFollowers")}:{" "}
+                          {camp.minimumCreatorFollowers.toLocaleString(locale)}
                         </span>
-                      ))}
-                    </div>
-                    <div className="explore-card-footer">
-                      <Link
-                        href={`/app/promote?campaign=${encodeURIComponent(camp.id)}`}
-                        className="button button-small"
-                      >
-                        <Megaphone size={14} />
-                        {t("p7ExplorePromoteBtn")}
-                        <ArrowUpRight size={15} />
-                      </Link>
-                      <Link
-                        href={`/offers/${encodeURIComponent(camp.id)}`}
-                        className="button button-small button-secondary"
-                      >
-                        {t("p8OfferViewDetails")}
-                      </Link>
-                      {camp.isDemo && <small className="field-hint">{t("development")}</small>}
-                    </div>
-                  </article>
-                ))}
+                        {camp.allowedPlatforms.slice(0, 3).map((p) => (
+                          <span key={p} className="tag">
+                            {p}
+                          </span>
+                        ))}
+                      </div>
+                      <div className="explore-card-footer">
+                        <Link
+                          href={`/app/promote?campaign=${encodeURIComponent(camp.id)}`}
+                          className="button button-small"
+                        >
+                          <Megaphone size={14} />
+                          {t("p7ExplorePromoteBtn")}
+                          <ArrowUpRight size={15} />
+                        </Link>
+                        <Link
+                          href={`/offers/${encodeURIComponent(camp.id)}`}
+                          className="button button-small button-secondary"
+                        >
+                          {t("p8OfferViewDetails")}
+                        </Link>
+                        <button
+                          type="button"
+                          className={`button button-small button-secondary ${isCompared ? "button-saved-active" : ""}`}
+                          aria-pressed={isCompared}
+                          onClick={() => toggleCompare(camp.id)}
+                        >
+                          <Scale size={13} />
+                          {t(isCompared ? "p9CompareAddedBtn" : "p9CompareAddBtn")}
+                        </button>
+                        {savedIds !== null && (
+                          <button
+                            type="button"
+                            className={`button button-small button-secondary ${isSaved ? "button-saved-active" : ""}`}
+                            aria-pressed={isSaved}
+                            onClick={() => void toggleSaved(camp.id)}
+                          >
+                            <Bookmark size={13} />
+                            {t(isSaved ? "p9SavedBtn" : "p9SaveBtn")}
+                          </button>
+                        )}
+                        {camp.isDemo && <small className="field-hint">{t("development")}</small>}
+                      </div>
+                    </article>
+                  );
+                })}
               </div>
             )
           ) : data.creators.length === 0 ? (

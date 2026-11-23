@@ -138,6 +138,8 @@ model User {
   audienceVerifiedSource       String?
   directoryOptIn               Boolean              @default(true)
   leaderboardOptIn             Boolean              @default(false)
+  audienceCaptureEnabled       Boolean              @default(true)
+  audienceCapturePrompt        String               @default("")
   notificationPrefs            Json?
   lastWeeklyDigestAt           DateTime?
   kycStatus                    String               @default("UNVERIFIED")
@@ -164,6 +166,9 @@ model User {
   showcaseItems                CreatorShowcaseItem[]
   profileLinkClicks            ProfileLinkClick[]
   postPlans                    CreatorPostPlan[]
+  collections                  CreatorCollection[]
+  audienceSubscribers          AudienceSubscriber[]
+  savedCampaigns               SavedCampaign[]
 }
 
 model Session {
@@ -236,6 +241,8 @@ model Campaign {
   ugcDeliverables         UgcDeliverable[]
   showcaseItems           CreatorShowcaseItem[]
   postPlans               CreatorPostPlan[]
+  collectionItems         CreatorCollectionItem[]
+  savedBy                 SavedCampaign[]
 
   @@index([state, startAt, endAt])
   @@index([advertiserId, createdAt])
@@ -1087,4 +1094,70 @@ model CreatorPostPlan {
 
   @@index([userId, scheduledFor])
   @@index([userId, status])
+}
+
+model CreatorCollection {
+  id          String                  @id @default(cuid())
+  creatorId   String
+  slug        String
+  title       String
+  description String                  @default("")
+  theme       String                  @default("obsidian")
+  published   Boolean                 @default(true)
+  viewsCount  Int                     @default(0)
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+  creator     User                    @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  items       CreatorCollectionItem[]
+
+  @@unique([creatorId, slug])
+  @@index([creatorId, published])
+}
+
+model CreatorCollectionItem {
+  id           String            @id @default(cuid())
+  collectionId String
+  campaignId   String
+  creatorNote  String            @default("")
+  sortOrder    Int               @default(0)
+  createdAt    DateTime          @default(now())
+  collection   CreatorCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  campaign     Campaign          @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([collectionId, campaignId])
+  @@index([collectionId, sortOrder])
+}
+
+model AudienceSubscriber {
+  id                     String    @id @default(cuid())
+  creatorId              String
+  emailCiphertext        String
+  emailDigest            String
+  sourceSlug             String    @default("profile")
+  locale                 String    @default("fr")
+  status                 String    @default("PENDING")
+  confirmTokenDigest     String?   @unique
+  unsubscribeTokenDigest String    @unique
+  confirmedAt            DateTime?
+  unsubscribedAt         DateTime?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+  creator                User      @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@unique([creatorId, emailDigest])
+  @@index([creatorId, status, createdAt])
+}
+
+model SavedCampaign {
+  id                    String    @id @default(cuid())
+  userId                String
+  campaignId            String
+  lowCapacityNotifiedAt DateTime?
+  createdAt             DateTime  @default(now())
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaign              Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, campaignId])
+  @@index([userId, createdAt])
+  @@index([campaignId])
 }

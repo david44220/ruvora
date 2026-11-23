@@ -9,6 +9,7 @@ import {
   Copy,
   FileText,
   Flame,
+  Layers3,
   Link2,
   Pin,
   Trophy,
@@ -25,6 +26,7 @@ import { defaultProfileModules } from "./profile-modules";
 import type { ProfileModule } from "@/lib/types";
 import type { MessageKey } from "@/i18n/messages";
 import { EventCard } from "./workspace-ui";
+import { PublicAudienceCaptureCard } from "./pass09-collections";
 export interface PublicProfileData {
   entry?: { slug: string; url: string } | null;
   referralEntry?: { slug: string; url: string } | null;
@@ -52,6 +54,15 @@ export interface PublicProfileData {
     promoCode?: string | null;
     discountLabel?: string | null;
   }[];
+  collections?: {
+    id: string;
+    slug: string;
+    title: string;
+    description: string;
+    theme: string;
+    itemCount: number;
+    url: string;
+  }[];
   trackedEvents?: Record<string, string>;
   profile: {
     profileModules?: ProfileModule[];
@@ -63,6 +74,8 @@ export interface PublicProfileData {
     profileTheme?: string | null;
     audienceStatus?: string;
     audienceVerifiedPlatform?: string | null;
+    audienceCaptureEnabled?: boolean;
+    audienceCapturePrompt?: string;
     followers: number;
     socialLinks: { platform: string; url: string; followers: number }[];
     customLinks: { id?: string; title: string; url: string; pinned?: boolean }[];
@@ -372,6 +385,38 @@ export function PublicProfile({
                     )}
                   </section>
                 ))}
+              {data.collections && data.collections.length > 0 && (
+                <section className="public-module public-collections-strip">
+                  <Eyebrow>{t("p9CollectionsEyebrow")}</Eyebrow>
+                  <div className="public-collections-grid">
+                    {data.collections.map((col) => (
+                      <Link key={col.id} href={col.url} className="profile-link">
+                        <span>
+                          <span className="link-icon">
+                            <Layers3 size={18} />
+                          </span>
+                          <span>
+                            <strong>{col.title}</strong>
+                            <small style={{ display: "block", opacity: 0.72 }}>
+                              {col.itemCount} {t("p9CollectionOffersCount")}
+                            </small>
+                          </span>
+                        </span>
+                        <ArrowUpRight size={18} />
+                      </Link>
+                    ))}
+                  </div>
+                </section>
+              )}
+              {p.audienceCaptureEnabled !== false && (
+                <div className="public-module" style={{ textAlign: "left" }}>
+                  <PublicAudienceCaptureCard
+                    handle={p.handle}
+                    prompt={p.audienceCapturePrompt}
+                    sourceSlug="profile"
+                  />
+                </div>
+              )}
               <p className="profile-disclaimer">{t("noGuarantee")}</p>
               {p.isDemo && <p className="profile-disclaimer">{t("profileDemo")}</p>}
               <div className="profile-powered">

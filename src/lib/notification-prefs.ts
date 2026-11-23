@@ -43,7 +43,7 @@ export function normalizeNotificationPrefs(raw: unknown): NotificationPrefs {
 
 /** Returns whether an in-app notification kind should be delivered given user preferences. */
 export function isNotificationKindEnabled(kind: string, prefs: NotificationPrefs): boolean {
-  if (kind === "CAMPAIGN_MATCH") return prefs.campaignMatch;
+  if (kind === "CAMPAIGN_MATCH" || kind === "SAVED_CAMPAIGN_ALERT") return prefs.campaignMatch;
   if (kind.startsWith("PAYOUT_")) return prefs.payoutUpdates;
   if (kind.startsWith("UGC_") || kind === "CAMPAIGN_INVITATION") return prefs.ugcUpdates;
   return true;

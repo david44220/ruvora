@@ -62,10 +62,11 @@ export function platformToSocialChannel(platform: string): SocialChannel {
 }
 
 export async function getReferralFunnel(user: User) {
-  const [referrals, credits, rules] = await Promise.all([
+  const [referrals, credits, referralShares, rules] = await Promise.all([
     db.referral.findMany({
       where: { inviterId: user.id },
       include: {
+        attribution: { select: { socialChannel: true } },
         invitee: {
           select: {
             id: true,
@@ -78,7 +79,18 @@ export async function getReferralFunnel(user: User) {
     }),
     db.referralCredit.findMany({
       where: { referral: { inviterId: user.id } },
-      include: { rewardUnit: { select: { state: true, amountMicros: true } } },
+      include: {
+        referral: { select: { attribution: { select: { socialChannel: true } } } },
+        rewardUnit: { select: { state: true, amountMicros: true } },
+      },
+    }),
+    db.shareLink.findMany({
+      where: { ownerId: user.id, source: "REFERRAL", active: true },
+      select: {
+        id: true,
+        socialChannel: true,
+        _count: { select: { growthEvents: true } },
+      },
     }),
     activeRules(db).catch(() => null),
   ]);
@@ -92,6 +104,50 @@ export async function getReferralFunnel(user: User) {
     ["VALIDATED", "CONSUMED"].includes(c.rewardUnit.state),
   );
   const referralRuMicros = validatedCredits.reduce((sum, c) => sum + c.rewardUnit.amountMicros, 0n);
+
+  const channelMap = new Map<
+    string,
+    {
+      channel: string;
+      visits: number;
+      registrations: number;
+      qualifiedReferees: number;
+      referralRuMicros: bigint;
+    }
+  >();
+  const touchChannel = (channel: string) => {
+    const key = channel || "DIRECT";
+    const row = channelMap.get(key) ?? {
+      channel: key,
+      visits: 0,
+      registrations: 0,
+      qualifiedReferees: 0,
+      referralRuMicros: 0n,
+    };
+    channelMap.set(key, row);
+    return row;
+  };
+  for (const s of referralShares) {
+    if (s._count.growthEvents > 0 || s.socialChannel !== "DIRECT") {
+      touchChannel(s.socialChannel).visits += s._count.growthEvents;
+    }
+  }
+  for (const r of referrals) {
+    const row = touchChannel(r.attribution?.socialChannel ?? "DIRECT");
+    row.registrations++;
+    if (r.invitee._count.activities > 0) row.qualifiedReferees++;
+  }
+  for (const c of validatedCredits) {
+    const row = touchChannel(c.referral.attribution?.socialChannel ?? "DIRECT");
+    row.referralRuMicros += c.rewardUnit.amountMicros;
+  }
+  const byChannel = [...channelMap.values()].sort(
+    (a, b) =>
+      b.qualifiedReferees - a.qualifiedReferees ||
+      b.registrations - a.registrations ||
+      b.visits - a.visits,
+  );
+
   const referralPolicy = rules?.config.referral;
   return {
     invitedCount,
@@ -101,6 +157,7 @@ export async function getReferralFunnel(user: User) {
     referralRuMicros,
     monthlyCapMicros: referralPolicy ? BigInt(referralPolicy.maxRewardPerReferrerPeriodMicros) : 0n,
     maxQualifiedReferees: referralPolicy?.maxQualifyingRefereesPerPeriod ?? 0,
+    byChannel,
   };
 }
 
@@ -228,6 +285,8 @@ export async function getPromoteHub(user: User) {
     referralFunnel,
     retention,
     postPlansResult,
+    collectionsResult,
+    audienceResult,
   ] = await Promise.all([
     listCampaigns(fresh, { forCreator: fresh.roles.includes("CREATOR") }),
     db.shareLink.findMany({
@@ -263,6 +322,8 @@ export async function getPromoteHub(user: User) {
     getReferralFunnel(fresh),
     import("./retention").then((m) => m.getCreatorRetentionSummary(fresh.id)),
     import("./retention").then((m) => m.listPostPlans(fresh)),
+    import("./collections").then((m) => m.listCreatorCollections(fresh)),
+    import("./audience-capture").then((m) => m.listCreatorAudienceSubscribers(fresh)),
   ]);
 
   const promoByCampaign = new Map(promoCodes.map((p) => [p.campaignId, p]));
@@ -325,6 +386,8 @@ export async function getPromoteHub(user: User) {
     referralFunnel,
     retention,
     postPlans: postPlansResult.plans,
+    collections: collectionsResult.collections,
+    audience: audienceResult,
   };
 }
 
