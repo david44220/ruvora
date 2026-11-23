@@ -1,6 +1,7 @@
 import type { User } from "@prisma/client";
 import { z } from "zod";
 import { db, jsonValue, type Tx } from "./db";
+import { isNotificationKindEnabled, normalizeNotificationPrefs } from "../lib/notification-prefs";
 
 export interface NotifyUserInput {
   userId: string;
@@ -11,6 +12,16 @@ export interface NotifyUserInput {
 }
 
 export async function notifyUser(tx: Tx, input: NotifyUserInput) {
+  const recipient = await tx.user.findUnique({
+    where: { id: input.userId },
+    select: { notificationPrefs: true },
+  });
+  if (recipient) {
+    const prefs = normalizeNotificationPrefs(recipient.notificationPrefs);
+    if (!isNotificationKindEnabled(input.kind, prefs)) {
+      return null;
+    }
+  }
   return tx.notification.create({
     data: {
       userId: input.userId,

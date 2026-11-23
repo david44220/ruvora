@@ -1,5 +1,25 @@
 import type { Locale } from "./messages";
 const errors: Record<string, [string, string]> = {
+  VANITY_SLUG_INVALID: [
+    "Custom short slugs must use 5–40 lowercase letters or digits with at least one hyphen (for example: mira-summer).",
+    "Un slug personnalisé doit contenir 5 à 40 lettres minuscules ou chiffres avec au moins un tiret (ex. mira-ete).",
+  ],
+  VANITY_SLUG_TAKEN: [
+    "This custom short slug is already taken. Choose another memorable name.",
+    "Ce slug personnalisé est déjà pris. Choisissez un autre nom mémorable.",
+  ],
+  BRIDGE_CAMPAIGN_ONLY: [
+    "The Mobile Offer Bridge Card can only be enabled on campaign share links.",
+    "La Carte Pont Mobile ne peut être activée que sur un lien de campagne.",
+  ],
+  POST_PLAN_LIMIT: [
+    "You have reached the maximum of 100 scheduled posts. Mark or remove older entries first.",
+    "Vous avez atteint la limite de 100 posts planifiés. Archivez ou supprimez d'anciens créneaux.",
+  ],
+  DIGEST_COOLDOWN: [
+    "A weekly digest was already queued recently. Wait before queuing another one.",
+    "Un résumé hebdomadaire a déjà été généré récemment. Patientez avant d'en relancer un.",
+  ],
   SHARE_LINK_INVALID: [
     "This share link is incomplete or invalid. Ask its owner for the original link.",
     "Ce lien de partage est incomplet ou invalide. Demandez le lien original à son propriétaire.",

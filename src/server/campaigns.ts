@@ -31,6 +31,19 @@ const creativeBriefSchema = z
     disclosureNote: z.string().trim().max(160).optional().default(""),
     suggestedHooks: z.array(z.string().trim().min(1).max(160)).max(4).optional().default([]),
     assetUrls: z.array(safeUrl).max(5).default([]),
+    dos: z.array(z.string().trim().min(1).max(160)).max(6).optional().default([]),
+    donts: z.array(z.string().trim().min(1).max(160)).max(6).optional().default([]),
+    brandTone: z.string().trim().max(120).optional().default(""),
+    colorPalette: z
+      .array(
+        z
+          .string()
+          .trim()
+          .regex(/^#[0-9a-fA-F]{6}$/),
+      )
+      .max(5)
+      .optional()
+      .default([]),
   })
   .strict();
 const abVariantSchema = z

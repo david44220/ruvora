@@ -91,6 +91,7 @@ export function ProfileForm({ user, onSaved }: { user: User; onSaved?: (user: Us
           profileTheme: String(fields.get("profileTheme") || "obsidian"),
           autoMonetize: fields.get("autoMonetize") === "on",
           directoryOptIn: fields.get("directoryOptIn") === "on",
+          leaderboardOptIn: fields.get("leaderboardOptIn") === "on",
           billingEntityName: String(fields.get("billingEntityName") || "").trim(),
           vatNumber: String(fields.get("vatNumber") || "").trim(),
           locale,
@@ -226,6 +227,17 @@ export function ProfileForm({ user, onSaved }: { user: User; onSaved?: (user: Us
             {t("p5DirectoryOptIn")}
           </label>
           <span className="field-hint">{t("p5DirectoryOptInHelp")}</span>
+        </div>
+        <div className="field full-width">
+          <label className="checkbox-field">
+            <input
+              name="leaderboardOptIn"
+              type="checkbox"
+              defaultChecked={Boolean(user.leaderboardOptIn)}
+            />
+            {t("p8LeaderboardOptInLabel")}
+          </label>
+          <span className="field-hint">{t("p8LeaderboardOptInHint")}</span>
         </div>
         <label className="field">
           {t("p5BillingEntity")}

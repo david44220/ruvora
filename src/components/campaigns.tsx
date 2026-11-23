@@ -120,6 +120,23 @@ export function CampaignForm({
     setField("briefCta", tpl.briefCta[lang]);
     setField("briefDisclosure", tpl.briefDisclosure[lang]);
     setField("briefHooks", tpl.briefHooks[lang]);
+    setField(
+      "briefBrandTone",
+      lang === "fr" ? "Authentique, chaleureux et concis" : "Authentic, warm, and concise",
+    );
+    setField("briefColorPalette", "#0B0A09, #EDBD89, #F4F0E8");
+    setField(
+      "briefDos",
+      lang === "fr"
+        ? "Montrer l'usage réel du produit\nAfficher clairement la mention partenaire"
+        : "Show real everyday product usage\nInclude the mandatory partner disclosure clearly",
+    );
+    setField(
+      "briefDonts",
+      lang === "fr"
+        ? "Aucune promesse de gain garanti\nÉviter les captures génériques sans contexte"
+        : "No guaranteed earnings claims\nAvoid generic stock overlays without context",
+    );
     setField("smartIosUrl", tpl.smartIosUrl ?? "");
     setField("smartAndroidUrl", tpl.smartAndroidUrl ?? "");
     setSelectedPlatforms(tpl.platforms);
@@ -195,6 +212,27 @@ export function CampaignForm({
       .map((s) => s.trim())
       .filter(Boolean)
       .slice(0, 4);
+    const brandTone = String(f.get("briefBrandTone") || "").trim();
+    const colorPalette = String(f.get("briefColorPalette") || "")
+      .split(",")
+      .map((s) => s.trim().toUpperCase())
+      .filter((c) => /^#[0-9A-F]{6}$/.test(c))
+      .slice(0, 5);
+    const dos = String(f.get("briefDos") || "")
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(0, 6);
+    const donts = String(f.get("briefDonts") || "")
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(0, 6);
+    const assetUrls = String(f.get("briefAssetUrls") || "")
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(0, 5);
     const hasBrief = Boolean(
       headline ||
       talkingPoints.length ||
@@ -202,7 +240,12 @@ export function CampaignForm({
       cta ||
       formatHint ||
       disclosureNote ||
-      suggestedHooks.length,
+      suggestedHooks.length ||
+      brandTone ||
+      colorPalette.length ||
+      dos.length ||
+      donts.length ||
+      assetUrls.length,
     );
 
     const abVariants: { id: string; label: string; destinationUrl: string; weight: number }[] = [];
@@ -248,7 +291,11 @@ export function CampaignForm({
                   formatHint,
                   disclosureNote,
                   suggestedHooks,
-                  assetUrls: [],
+                  assetUrls,
+                  dos,
+                  donts,
+                  brandTone,
+                  colorPalette,
                 },
               }
             : {}),
@@ -528,6 +575,34 @@ export function CampaignForm({
             <label className="field full-width">
               {t("p6AdvHooksLabel")}
               <textarea name="briefHooks" rows={3} />
+            </label>
+            <label className="field">
+              {t("p8BriefBrandToneLabel")}
+              <input
+                name="briefBrandTone"
+                maxLength={120}
+                placeholder={t("p8BriefBrandTonePlaceholder")}
+              />
+            </label>
+            <label className="field">
+              {t("p8BriefPaletteLabel")}
+              <input name="briefColorPalette" maxLength={80} placeholder="#0B0A09, #EDBD89" />
+            </label>
+            <label className="field">
+              {t("p8BriefDosLabel")}
+              <textarea name="briefDos" rows={3} placeholder={t("p8BriefDosPlaceholder")} />
+            </label>
+            <label className="field">
+              {t("p8BriefDontsLabel")}
+              <textarea name="briefDonts" rows={3} placeholder={t("p8BriefDontsPlaceholder")} />
+            </label>
+            <label className="field full-width">
+              {t("p8BriefAssetsLabel")}
+              <textarea
+                name="briefAssetUrls"
+                rows={2}
+                placeholder="https://example.com/press-kit"
+              />
             </label>
           </div>
         </details>
@@ -870,7 +945,7 @@ export function AdvertiserScreen({
   );
 }
 function Opportunity({ campaign }: { campaign: Campaign }) {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const { data, reload } = useDashboard();
   const action = useAction();
   const promoAction = useAction();
@@ -1014,6 +1089,19 @@ function Opportunity({ campaign }: { campaign: Campaign }) {
           <Megaphone size={14} />
           {t("p7OpenInPromoteStudio")}
         </Link>
+        <Link
+          href={`/offers/${encodeURIComponent(campaign.id)}`}
+          className="button button-small button-secondary"
+        >
+          {t("p8OfferViewDetails")}
+        </Link>
+        <a
+          href={`/api/campaigns/${encodeURIComponent(campaign.id)}/brief-pdf?lang=${locale}`}
+          className="button button-small button-secondary"
+          download
+        >
+          {t("p8OfferDownloadBriefPdf")}
+        </a>
       </div>
       {hasBrief && brief && (
         <details className="creative-brief-box">

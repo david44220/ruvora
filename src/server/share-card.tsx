@@ -82,14 +82,32 @@ export async function renderShareCard(
     if (profile.audienceStatus === "VERIFIED") badge = t.p6CardVerified;
 
     if (kind === "milestone") {
-      const [actXp, questXp] = await Promise.all([
+      const [actXp, questXp, shareRows, planRows] = await Promise.all([
         db.xpEntry.aggregate({ where: { userId: profile.id }, _sum: { amount: true } }),
         db.questClaim.aggregate({ where: { userId: profile.id }, _sum: { xpAwarded: true } }),
+        db.growthEvent.findMany({
+          where: { userId: profile.id, type: "SOCIAL_KIT_SHARED" },
+          select: { occurredAt: true },
+          take: 200,
+        }),
+        db.creatorPostPlan.findMany({
+          where: { userId: profile.id, status: "PUBLISHED" },
+          select: { publishedAt: true, updatedAt: true },
+          take: 200,
+        }),
       ]);
-      const xp = (actXp._sum.amount ?? 0) + (questXp._sum.xpAwarded ?? 0);
-      if (xp < 100) return new Response(null, { status: 404 });
-      eyebrow = t.progression;
-      subtitle = `${t.p2Level} ${Math.floor(Math.sqrt(xp / 100)) + 1} · ${xp} ${t.xpUnit}`;
+      const xp = Math.max(0, (actXp._sum.amount ?? 0) + (questXp._sum.xpAwarded ?? 0));
+      const level = Math.floor(Math.sqrt(xp / 100)) + 1;
+      const { computeWeeklyStreak } = await import("../lib/retention");
+      const streak = computeWeeklyStreak([
+        ...shareRows.map((s) => s.occurredAt),
+        ...planRows.map((p) => p.publishedAt ?? p.updatedAt),
+      ]);
+      eyebrow = t.progression.toUpperCase();
+      subtitle = `${t.p2Level} ${level} · ${xp} ${t.xpUnit}${
+        streak.currentStreakWeeks > 0 ? ` · ${streak.currentStreakWeeks} ${t.p8StreakWeekUnit}` : ""
+      }`;
+      qrTargetUrl = `${safeOrigin()}/@${profile.handle}`;
     } else if (kind === "referral") {
       eyebrow = t.p2Referrals.toUpperCase();
       title = t.p6CardReferralTitle;
@@ -177,6 +195,31 @@ export async function renderShareCard(
         qrTargetUrl = `${safeOrigin()}/@${profile.handle}`;
       }
     }
+  } else if (kind === "campaign") {
+    const now = new Date();
+    const campaign = await db.campaign.findUnique({
+      where: { id: slug },
+      include: { advertiser: { select: { displayName: true, suspended: true } } },
+    });
+    if (
+      !campaign ||
+      campaign.state !== "ACTIVE" ||
+      campaign.startAt > now ||
+      campaign.endAt <= now ||
+      campaign.advertiser.suspended ||
+      (!isDevelopment() && campaign.isDemo)
+    ) {
+      return new Response(null, { status: 404 });
+    }
+    const brief = campaign.creativeBrief as { headline?: string } | null;
+    eyebrow = t.p8OfferEyebrow;
+    title = campaign.name;
+    subtitle = brief?.headline || campaign.description || campaign.objective;
+    handleLine = `${t.p8OfferByAdvertiser}: ${campaign.advertiser.displayName}`;
+    partnerTag = t.p6CardPartnerBadge;
+    badge = campaign.objective;
+    demo = campaign.isDemo;
+    qrTargetUrl = `${safeOrigin()}/offers/${campaign.id}`;
   } else if (kind === "event") {
     const event = await db.event.findUnique({ where: { slug } });
     if (

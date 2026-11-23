@@ -9,6 +9,10 @@ export interface CreativeBrief {
   disclosureNote?: string;
   suggestedHooks?: string[];
   assetUrls?: string[];
+  dos?: string[];
+  donts?: string[];
+  brandTone?: string;
+  colorPalette?: string[];
 }
 export interface AbVariant {
   id: string;
@@ -30,6 +34,12 @@ export interface SmartRouting {
   androidUrl?: string;
   localeUrls?: Partial<Record<"fr" | "en" | "es" | "de" | "it" | "pt", string>>;
 }
+export interface NotificationPrefs {
+  campaignMatch: boolean;
+  payoutUpdates: boolean;
+  ugcUpdates: boolean;
+  weeklyDigestEmail: boolean;
+}
 export interface User {
   id: string;
   email: string;
@@ -43,6 +53,8 @@ export interface User {
   preferredLanguages?: string[];
   autoMonetize?: boolean;
   directoryOptIn?: boolean;
+  leaderboardOptIn?: boolean;
+  notificationPrefs?: NotificationPrefs | null;
   kycStatus?: string;
   billingEntityName?: string | null;
   vatNumber?: string | null;

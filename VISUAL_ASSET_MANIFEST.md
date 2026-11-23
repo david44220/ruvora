@@ -75,3 +75,7 @@ No new AI artwork was generated. `scripts/optimize-assets.mjs` derives three ins
 | Standard PWA icon | `public/assets/pwa/icon-192.png`         | 192 × 192  |         70147 |
 | Maskable PWA icon | `public/assets/pwa/icon-512.png`         | 512 × 512  |        497507 |
 | Apple Touch icon  | `public/assets/pwa/apple-touch-icon.png` | 180 × 180  |         61814 |
+
+## Pass 08 dynamic campaign OG & creator milestone share cards
+
+No new AI artwork was generated. `/share-card/campaign/[id]` renders dynamic `1200×630` Open Graph / Twitter Cards (plus `?format=story` and `?format=square`) for public `/offers/[id]` sheets using `public/assets/share/ruvora-orb-card.png` and an ISO/IEC 18004 QR code pointing to `/offers/[id]`. `/share-card/milestone/[handle]` now supports any active creator (`xp >= 0`) with Level, XP, weekly consistency streak, and QR code pointing to `/@[handle]`.

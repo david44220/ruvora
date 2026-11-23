@@ -4,15 +4,18 @@ import Link from "next/link";
 import { useMemo, useState, type FormEvent } from "react";
 import {
   ArrowUpRight,
+  Award,
   BadgeCheck,
   Check,
   Compass,
   Filter,
+  Flame,
   FlaskConical,
   Megaphone,
   Search,
   Smartphone,
   Sparkles,
+  Trophy,
   Users,
   Zap,
 } from "lucide-react";
@@ -260,6 +263,12 @@ export function ExploreMarketplace({ initialData }: { initialData: ExploreMarket
                         {t("p7ExplorePromoteBtn")}
                         <ArrowUpRight size={15} />
                       </Link>
+                      <Link
+                        href={`/offers/${encodeURIComponent(camp.id)}`}
+                        className="button button-small button-secondary"
+                      >
+                        {t("p8OfferViewDetails")}
+                      </Link>
                       {camp.isDemo && <small className="field-hint">{t("development")}</small>}
                     </div>
                   </article>
@@ -408,6 +417,72 @@ export function ExploreMarketplace({ initialData }: { initialData: ExploreMarket
             <p className="field-hint" style={{ marginTop: 18 }}>
               {t("p7SimDisclaimer")}
             </p>
+          </div>
+        </section>
+
+        <section className="wrap section-space">
+          <div className="panel explore-leaderboard">
+            <div className="panel-header">
+              <div>
+                <Eyebrow>
+                  <Trophy
+                    size={13}
+                    style={{ display: "inline", verticalAlign: "-2px", marginRight: 5 }}
+                  />
+                  XP OPT-IN
+                </Eyebrow>
+                <h2>{t("p8LeaderboardTitle")}</h2>
+                <p className="panel-description">{t("p8LeaderboardSubtitle")}</p>
+              </div>
+              <span className="tag">{t("noCashValue")}</span>
+            </div>
+
+            {!data.leaderboard || data.leaderboard.length === 0 ? (
+              <Empty>{t("p8LeaderboardEmpty")}</Empty>
+            ) : (
+              <div className="leaderboard-list">
+                {data.leaderboard.map((entry) => (
+                  <article key={entry.handle} className="leaderboard-row">
+                    <div className="leaderboard-rank number">#{entry.rank}</div>
+                    <div className="leaderboard-identity">
+                      <Link
+                        href={`/@${encodeURIComponent(entry.handle)}`}
+                        className="leaderboard-name"
+                      >
+                        <strong>{entry.displayName}</strong>
+                        <span className="field-hint">@{entry.handle}</span>
+                      </Link>
+                      <div className="profile-badge-row" style={{ justifyContent: "flex-start" }}>
+                        <span className="tag">{entry.category}</span>
+                        {entry.audienceStatus === "VERIFIED" && (
+                          <span className="tag tag-verified">
+                            <BadgeCheck size={12} /> {t("p4AudienceVerifiedBadge")}
+                          </span>
+                        )}
+                        {entry.streakWeeks > 0 && (
+                          <span className="tag">
+                            <Flame size={12} /> {entry.streakWeeks} {t("p8StreakWeekUnit")}
+                          </span>
+                        )}
+                        {entry.badges.slice(0, 2).map((b) => (
+                          <span key={b.code} className="tag">
+                            <Award size={12} /> {t(b.labelKey as MessageKey)}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="leaderboard-score number">
+                      <strong>
+                        {entry.totalXp.toLocaleString(locale)} {t("xpUnit")}
+                      </strong>
+                      <small className="field-hint">
+                        {t("p8LeaderboardLevel")} {entry.level} · {entry.reliabilityTier}
+                      </small>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
           </div>
         </section>
       </main>

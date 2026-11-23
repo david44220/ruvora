@@ -61,3 +61,11 @@ Migration `202611230011_pass07_mobile_explore_conversion` adds optional `Campaig
 
 - On `/go/[slug]` and `GET /api/campaigns`, `resolveSmartDestination()` (`src/lib/smart-routing.ts`) selects the destination URL in strict priority order: assigned A/B split-test variant → iOS / Android device rule → `Accept-Language` rule → default `destinationUrl`. `AttributionContext` provenance, `HttpOnly` cookies, and `Activity.attributionSnapshot` remain completely unchanged.
 - `POST /api/profiles/[handle]/link-click` records rate-limited `ProfileLinkClick` rows strictly for creator observability (`GET /api/profiles/link-clicks`); clicks on personal bio-links create zero Money, zero RU, zero XP, and zero Event Points, and are covered by GDPR Article 20 export and Article 17 anonymization.
+
+## Pass 08 vanity short slugs & mobile smart offer bridge
+
+Migration `202611230012_pass08_viral_retention_conversion` adds optional `ShareLink.customSlug` (unique), `ShareLink.bridgeEnabled` (default `false`), `User.leaderboardOptIn`, `User.notificationPrefs`, `User.lastWeeklyDigestAt`, and `CreatorPostPlan`.
+
+- Owners of active share links may assign a server-validated kebab-case vanity slug (`isVanityShareSlug`, 5–40 lowercase characters with at least one hyphen and reserved-prefix rejection) via `POST /api/share-links/customize`. Opening `/go/<customSlug>` executes the exact same `startAttribution()` flow, `HttpOnly` signed cookies, and immutable `AttributionContext` provenance as 24-character opaque slugs.
+- Campaign share links may opt into `bridgeEnabled: true`: after `startAttribution()` issues the `HttpOnly` attribution cookies, `/go/[slug]` redirects to `/go-card/[slug]` (`src/app/go-card/[slug]/page.tsx`), displaying the creator's personal promo code (1-tap copy), mandatory partner disclosure, and Smart Routed destination resolved strictly server-side from the database (never from query parameters).
+- `CreatorPostPlan`, weekly streaks, milestone badges, opt-in XP leaderboard, Creative Brief PDF exports, and encrypted `WEEKLY_DIGEST` emails create zero Money, zero RU, and zero Event Points, and are fully covered by GDPR Article 20 export and Article 17 anonymization.

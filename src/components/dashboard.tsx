@@ -51,6 +51,7 @@ import {
 } from "./pass05-creator";
 import { PromoteHubScreen } from "./pass06-promote";
 import { MediaKitAndLinksPanel, MobileBottomNav, PwaInstallBanner } from "./pwa-mobile";
+import { NotificationPrefsPanel } from "./pass08-retention";
 import { CreatorAnalytics, ReferralsScreen } from "./growth";
 import { EventStudio } from "./event-studio";
 import { SecurityScreen } from "./security";
@@ -508,6 +509,7 @@ export function DashboardScreen({
           <ProfileForm user={data.user} onSaved={() => void reload()} />
           <ProfileModulesEditor user={data.user} onSaved={() => void reload()} />
         </div>
+        <NotificationPrefsPanel />
       </>
     );
   return <OverviewScreen data={data} reload={reload} />;

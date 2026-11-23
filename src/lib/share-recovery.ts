@@ -13,8 +13,39 @@ const recoveryCodes = [
   "DEMO_PRODUCTION_BLOCKED",
 ] as const;
 export type ShareRecoveryCode = (typeof recoveryCodes)[number];
+const RESERVED_VANITY_PREFIXES = new Set([
+  "admin",
+  "api",
+  "app",
+  "auth",
+  "billing",
+  "embed",
+  "events",
+  "explore",
+  "go",
+  "login",
+  "offers",
+  "official",
+  "privacy",
+  "register",
+  "root",
+  "ruvora",
+  "security",
+  "staff",
+  "support",
+  "system",
+  "terms",
+]);
+
+export function isVanityShareSlug(value: string): boolean {
+  if (value.length < 5 || value.length > 40) return false;
+  if (!/^[a-z0-9]{2,18}(?:-[a-z0-9]{2,18}){1,3}$/.test(value)) return false;
+  const firstSegment = value.split("-")[0] ?? "";
+  return !RESERVED_VANITY_PREFIXES.has(firstSegment);
+}
+
 export function isShareSlug(value: string): boolean {
-  return /^[A-Za-z0-9_-]{24}$/.test(value);
+  return /^[A-Za-z0-9_-]{24}$/.test(value) || isVanityShareSlug(value);
 }
 export function isShareRecoveryCode(value: string): value is ShareRecoveryCode {
   return (recoveryCodes as readonly string[]).includes(value);

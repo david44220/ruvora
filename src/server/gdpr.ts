@@ -35,6 +35,7 @@ export async function exportUserGdprData(user: User) {
     audienceSnapshots,
     showcaseItems,
     profileLinkClicksCount,
+    postPlans,
   ] = await Promise.all([
     db.user.findUniqueOrThrow({
       where: { id: user.id },
@@ -60,6 +61,8 @@ export async function exportUserGdprData(user: User) {
         autoMonetize: true,
         profileTheme: true,
         directoryOptIn: true,
+        leaderboardOptIn: true,
+        notificationPrefs: true,
         kycStatus: true,
         billingEntityName: true,
         vatNumber: true,
@@ -168,6 +171,21 @@ export async function exportUserGdprData(user: User) {
     db.profileLinkClick.count({
       where: { userId: user.id },
     }),
+    db.creatorPostPlan.findMany({
+      where: { userId: user.id },
+      select: {
+        id: true,
+        campaignId: true,
+        socialChannel: true,
+        title: true,
+        scheduledFor: true,
+        status: true,
+        note: true,
+        publishedAt: true,
+        createdAt: true,
+      },
+      orderBy: { scheduledFor: "desc" },
+    }),
   ]);
 
   return jsonValue({
@@ -196,6 +214,7 @@ export async function exportUserGdprData(user: User) {
     audienceSnapshots,
     showcaseItems,
     profileLinkClicksCount,
+    postPlans,
   });
 }
 
@@ -263,6 +282,7 @@ export async function anonymizeUserAccount(
     await tx.passkeyChallenge.deleteMany({ where: { userId: user.id } });
     await tx.creatorShowcaseItem.deleteMany({ where: { creatorId: user.id } });
     await tx.profileLinkClick.deleteMany({ where: { userId: user.id } });
+    await tx.creatorPostPlan.deleteMany({ where: { userId: user.id } });
     await tx.shareLink.updateMany({ where: { ownerId: user.id }, data: { active: false } });
     await tx.promoCode.updateMany({ where: { creatorId: user.id }, data: { active: false } });
     await tx.advertiserIntegration.deleteMany({ where: { advertiserId: user.id } });
@@ -286,6 +306,9 @@ export async function anonymizeUserAccount(
         billingEntityName: null,
         vatNumber: null,
         directoryOptIn: false,
+        leaderboardOptIn: false,
+        notificationPrefs: jsonValue(null),
+        lastWeeklyDigestAt: null,
         autoMonetize: false,
         audienceVerifyCode: null,
         suspended: true,
